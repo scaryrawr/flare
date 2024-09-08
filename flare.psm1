@@ -35,24 +35,98 @@ function Get-LastCommandTime {
     $seconds.ToString("F2") + "s";
 }
 
-$colors = [enum]::GetValues([System.ConsoleColor])
-$flare_promptSeparatorsLeft = "▶"
-$flare_promptHeadLeft = "▶"
-$flare_promptTailLeft = "◖"
-$flare_promptSeparatorsRight = "◀"
-$flare_promptHeadRight = "◀"
-$flare_promptTailRight = "◗"
+$flare_promptSeparatorsLeft = ""
+$flare_promptHeadLeft = ""
+$flare_promptTailLeft = "░▒▓"
+$flare_promptSeparatorsRight = ""
+$flare_promptHeadRight = ""
+$flare_promptTailRight = "▓▒░"
+
+$defaultStyle = "`e[0m"
+$foregroundStyles = [ordered]@{
+    'default'       = "`e[39m"
+    'black'         = "`e[30m"
+    'red'           = "`e[31m"
+    'green'         = "`e[32m"
+    'yellow'        = "`e[33m"
+    'blue'          = "`e[34m"
+    'magenta'       = "`e[35m"
+    'cyan'          = "`e[36m"
+    'white'         = "`e[37m"
+    'brightBlack'   = "`e[90m"
+    'brightRed'     = "`e[91m"
+    'brightGreen'   = "`e[92m"
+    'brightYellow'  = "`e[93m"
+    'brightBlue'    = "`e[94m"
+    'brightMagenta' = "`e[95m"
+    'brightCyan'    = "`e[96m"
+    'brightWhite'   = "`e[97m"
+}
+
+$backgroundStyles = [ordered]@{
+    'default'       = "`e[49m"
+    'black'         = "`e[40m"
+    'red'           = "`e[41m"
+    'green'         = "`e[42m"
+    'yellow'        = "`e[43m"
+    'blue'          = "`e[44m"
+    'magenta'       = "`e[45m"
+    'cyan'          = "`e[46m"
+    'white'         = "`e[47m"
+    'brightBlack'   = "`e[100m"
+    'brightRed'     = "`e[101m"
+    'brightGreen'   = "`e[102m"
+    'brightYellow'  = "`e[103m"
+    'brightBlue'    = "`e[104m"
+    'brightMagenta' = "`e[105m"
+    'brightCyan'    = "`e[106m"
+    'brightWhite'   = "`e[107m"
+}
 
 $flare_osIcon ??= "$(Get-OSIcon)";
 $flare_topPrefix ??= "╭─";
 $flare_bottomPrefix ??= "╰─";
 $flare_promptArrow ??= "";
 $flare_dateFormat ??= 'HH:mm:ss';
+
+$escapeRegex = "(`e\[\d+\w)"
+
+function Get-LeftPrompt {
+    $leftPieces = @(
+        "$flare_osIcon"
+        "$($executionContext.SessionState.Path.CurrentLocation)"
+    );
+
+    $left = "${flare_topPrefix}";
+
+    $count = 1;
+    foreach ($piece in $leftPieces) {
+        $background = $backgroundStyles.Values[($backgroundStyles.Count - $count) % $backgroundStyles.Count];
+        $foreground = $foregroundStyles.Values[($foregroundStyles.Count - $count) % $foregroundStyles.Count];
+
+        $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - $(if (($count - 1) -gt 0) { $count - 1 } else { $count })) % $foregroundStyles.Count];
+        $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$background$flare_promptSeparatorsLeft" } else { "$flare_promptTailLeft" })";
+
+        if (! $piece) {
+            continue;
+        }
+
+        $left += "$separator$background$foreground$piece";
+        $count += 1;
+    }
+
+    $left += "$($backgroundStyles['default'])$flare_promptHeadLeft";
+
+    $left;
+}
 function Prompt {
-    $left = "${flare_topPrefix} ${flare_osIcon} $($executionContext.SessionState.Path.CurrentLocation)";
-    $right = "$(Get-LastCommandTime)$(Get-Date -Format $flare_dateFormat)";
-    $line = "${flare_bottomPrefix}$(${flare_promptArrow} * ($nestedPromptLevel + 1))";
+    $left = Get-LeftPrompt;
+    $right = "$(Get-LastCommandTime) $(Get-Date -Format $flare_dateFormat)";
+    $line = "$defaultStyle$flare_bottomPrefix$($foregroundStyles.brightGreen)$($flare_promptArrow * ($nestedPromptLevel + 1))$defaultStyle";
+
+    # Figure out spacing between left and right prompts
     $width = $Host.UI.RawUI.WindowSize.Width;
-    $spaces = $width - ($left.Length + $right.Length);
-    "$left$(' ' * $spaces)$right`n$line ";
+    $spaces = $width - ($($left -replace $escapeRegex).Length + $($right -replace $escapeRegex).Length);
+
+    "$left$defaultStyle$(' ' * $spaces)$right`n$line ";
 }
