@@ -1,3 +1,11 @@
+$flare_promptSeparatorsLeft ??= ""
+$flare_promptHeadLeft ??= ""
+$flare_promptTailLeft ??= "░▒▓"
+$flare_promptSeparatorsRight ??= ""
+$flare_promptHeadRight ??= ""
+$flare_promptTailRight ??= "▓▒░"
+$flare_gitIcon ??= ""
+
 function Get-LinuxDistro {
     $distro = "$(grep '^ID=' /etc/*release | cut -d'=' -f2)".Trim().ToLower();
     if ($distro) {
@@ -25,6 +33,16 @@ function Get-OSIcon {
     return ""
 }
 
+function Get-GitBranch {
+    $branch = git rev-parse --abbrev-ref HEAD 2> $null;
+    if ($branch) {
+        return "$flare_gitIcon $branch";
+    }
+    else {
+        return "";
+    }
+}
+
 function Get-LastCommandTime {
     $lastCommand = Get-History -Count 1;
     if (-not $lastCommand) { return "" }
@@ -34,13 +52,6 @@ function Get-LastCommandTime {
 
     $seconds.ToString("F2") + "s";
 }
-
-$flare_promptSeparatorsLeft = ""
-$flare_promptHeadLeft = ""
-$flare_promptTailLeft = "░▒▓"
-$flare_promptSeparatorsRight = ""
-$flare_promptHeadRight = ""
-$flare_promptTailRight = "▓▒░"
 
 $defaultStyle = "`e[0m"
 $foregroundStyles = [ordered]@{
@@ -95,6 +106,7 @@ function Get-LeftPrompt {
     $leftPieces = @(
         "$flare_osIcon"
         "$($executionContext.SessionState.Path.CurrentLocation)"
+        "$(Get-GitBranch)"
     );
 
     $left = "${flare_topPrefix}";
@@ -102,7 +114,7 @@ function Get-LeftPrompt {
     $count = 1;
     foreach ($piece in $leftPieces) {
         $background = $backgroundStyles.Values[($backgroundStyles.Count - $count) % $backgroundStyles.Count];
-        $foreground = $foregroundStyles.Values[($foregroundStyles.Count - $count) % $foregroundStyles.Count];
+        $foreground = $foregroundStyles.Values[$count % $foregroundStyles.Count];
 
         $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - $(if (($count - 1) -gt 0) { $count - 1 } else { $count })) % $foregroundStyles.Count];
         $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$background$flare_promptSeparatorsLeft" } else { "$flare_promptTailLeft" })";
@@ -115,7 +127,8 @@ function Get-LeftPrompt {
         $count += 1;
     }
 
-    $left += "$($backgroundStyles['default'])$flare_promptHeadLeft";
+    $foreground = $foregroundStyles.Values[($foregroundStyles.Count - ($count - 1)) % $foregroundStyles.Count];
+    $left += "$($backgroundStyles['default'])$foreground$flare_promptHeadLeft";
 
     $left;
 }
