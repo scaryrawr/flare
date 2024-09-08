@@ -60,16 +60,22 @@ function Get-GitStatus {
             }
         }
 
-        $statusString = ""
-        if ($added -gt 0) { $statusString += "$added" }
-        if ($modified -gt 0) { $statusString += "$modified" }
-        if ($deleted -gt 0) { $statusString += "󰆴$deleted" }
-        if ($renamed -gt 0) { $statusString += "󰑕$renamed" }
-        if ($copied -gt 0) { $statusString += "$copied" }
-        if ($unmerged -gt 0) { $statusString += "$unmerged" }
-        if ($untracked -gt 0) { $statusString += "$untracked" }
+        $script:statusString = ""
+        function Add-Status($icon, $count) {
+            if ($count -eq 0) { return }
+            if ($script:statusString) { $script:statusString += " " }
+            $script:statusString += "$icon $count"
+        }
 
-        return $statusString
+        Add-Status "" $added
+        Add-Status "" $modified
+        Add-Status "󰆴" $deleted
+        Add-Status "󰑕" $renamed
+        Add-Status "" $copied
+        Add-Status "" $unmerged
+        Add-Status "" $untracked
+
+        return $script:statusString
     }
 
     return ""
@@ -165,7 +171,7 @@ function Get-LeftPrompt {
             continue
         }
 
-        $left += "$separator$background$foreground$piece"
+        $left += "$separator$background$foreground $piece "
         $count += 1
     }
 
