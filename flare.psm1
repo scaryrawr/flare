@@ -7,12 +7,12 @@ $flare_promptTailRight ??= "▓▒░"
 $flare_gitIcon ??= ""
 
 function Get-LinuxDistro {
-    $distro = "$(grep '^ID=' /etc/*release | cut -d'=' -f2)".Trim().ToLower();
+    $distro = "$(grep '^ID=' /etc/*release | cut -d'=' -f2)".Trim().ToLower()
     if ($distro) {
-        return $distro;
+        return $distro
     }
     else {
-        return "Linux";
+        return "Linux"
     }
 }
 
@@ -33,24 +33,66 @@ function Get-OSIcon {
     return ""
 }
 
+function Get-GitStatus {
+    $status = git status --porcelain 2> $null
+    if ($status) {
+        $added = 0
+        $modified = 0
+        $deleted = 0
+        $renamed = 0
+        $copied = 0
+        $unmerged = 0
+        $untracked = 0
+
+        $status -split "`n" | ForEach-Object {
+            if ($_ -match "^\s*([AMDRCU?]+)\s+(.*)") {
+                # $file = $Matches[2]
+                $status = $Matches[1]
+                switch ($status) {
+                    "A" { $added += 1 }
+                    "M" { $modified += 1 }
+                    "D" { $deleted += 1 }
+                    "R" { $renamed += 1 }
+                    "C" { $copied += 1 }
+                    "U" { $unmerged += 1 }
+                    "??" { $untracked += 1 }
+                }
+            }
+        }
+
+        $statusString = ""
+        if ($added -gt 0) { $statusString += "$added" }
+        if ($modified -gt 0) { $statusString += "$modified" }
+        if ($deleted -gt 0) { $statusString += "󰆴$deleted" }
+        if ($renamed -gt 0) { $statusString += "󰑕$renamed" }
+        if ($copied -gt 0) { $statusString += "$copied" }
+        if ($unmerged -gt 0) { $statusString += "$unmerged" }
+        if ($untracked -gt 0) { $statusString += "$untracked" }
+
+        return $statusString
+    }
+
+    return ""
+}
+
 function Get-GitBranch {
-    $branch = git rev-parse --abbrev-ref HEAD 2> $null;
+    $branch = git rev-parse --abbrev-ref HEAD 2> $null
     if ($branch) {
-        return "$flare_gitIcon $branch";
+        return "$flare_gitIcon $branch $(Get-GitStatus)"
     }
     else {
-        return "";
+        return ""
     }
 }
 
 function Get-LastCommandTime {
-    $lastCommand = Get-History -Count 1;
+    $lastCommand = Get-History -Count 1
     if (-not $lastCommand) { return "" }
 
     $seconds = ($lastCommand.EndExecutionTime - $lastCommand.StartExecutionTime).TotalSeconds
     if ($seconds -lt 0.25) { return "" }
 
-    $seconds.ToString("F2") + "s";
+    $seconds.ToString("F2") + "s"
 }
 
 $defaultStyle = "`e[0m"
@@ -94,11 +136,11 @@ $backgroundStyles = [ordered]@{
     'brightWhite'   = "`e[107m"
 }
 
-$flare_osIcon ??= "$(Get-OSIcon)";
-$flare_topPrefix ??= "╭─";
-$flare_bottomPrefix ??= "╰─";
-$flare_promptArrow ??= "";
-$flare_dateFormat ??= 'HH:mm:ss';
+$flare_osIcon ??= "$(Get-OSIcon)"
+$flare_topPrefix ??= "╭─"
+$flare_bottomPrefix ??= "╰─"
+$flare_promptArrow ??= ""
+$flare_dateFormat ??= 'HH:mm:ss'
 
 $escapeRegex = "(`e\[\d+\w)"
 
@@ -107,39 +149,40 @@ function Get-LeftPrompt {
         "$flare_osIcon"
         "$($executionContext.SessionState.Path.CurrentLocation)"
         "$(Get-GitBranch)"
-    );
+    )
 
-    $left = "${flare_topPrefix}";
+    $left = "${flare_topPrefix}"
 
-    $count = 1;
+    $count = 1
     foreach ($piece in $leftPieces) {
-        $background = $backgroundStyles.Values[($backgroundStyles.Count - $count) % $backgroundStyles.Count];
-        $foreground = $foregroundStyles.Values[$count % $foregroundStyles.Count];
+        $background = $backgroundStyles.Values[($backgroundStyles.Count - $count) % $backgroundStyles.Count]
+        $foreground = $foregroundStyles.Values[$count % $foregroundStyles.Count]
 
-        $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - $(if (($count - 1) -gt 0) { $count - 1 } else { $count })) % $foregroundStyles.Count];
-        $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$background$flare_promptSeparatorsLeft" } else { "$flare_promptTailLeft" })";
+        $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - $(if (($count - 1) -gt 0) { $count - 1 } else { $count })) % $foregroundStyles.Count]
+        $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$background$flare_promptSeparatorsLeft" } else { "$flare_promptTailLeft" })"
 
         if (! $piece) {
-            continue;
+            continue
         }
 
-        $left += "$separator$background$foreground$piece";
-        $count += 1;
+        $left += "$separator$background$foreground$piece"
+        $count += 1
     }
 
-    $foreground = $foregroundStyles.Values[($foregroundStyles.Count - ($count - 1)) % $foregroundStyles.Count];
-    $left += "$($backgroundStyles['default'])$foreground$flare_promptHeadLeft";
+    $foreground = $foregroundStyles.Values[($foregroundStyles.Count - ($count - 1)) % $foregroundStyles.Count]
+    $left += "$($backgroundStyles['default'])$foreground$flare_promptHeadLeft"
 
-    $left;
+    $left
 }
+
 function Prompt {
-    $left = Get-LeftPrompt;
-    $right = "$(Get-LastCommandTime) $(Get-Date -Format $flare_dateFormat)";
-    $line = "$defaultStyle$flare_bottomPrefix$($foregroundStyles.brightGreen)$($flare_promptArrow * ($nestedPromptLevel + 1))$defaultStyle";
+    $left = Get-LeftPrompt
+    $right = "$(Get-LastCommandTime) $(Get-Date -Format $flare_dateFormat)"
+    $line = "$defaultStyle$flare_bottomPrefix$($foregroundStyles.brightGreen)$($flare_promptArrow * ($nestedPromptLevel + 1))$defaultStyle"
 
     # Figure out spacing between left and right prompts
-    $width = $Host.UI.RawUI.WindowSize.Width;
-    $spaces = $width - ($($left -replace $escapeRegex).Length + $($right -replace $escapeRegex).Length);
+    $width = $Host.UI.RawUI.WindowSize.Width
+    $spaces = $width - ($($left -replace $escapeRegex).Length + $($right -replace $escapeRegex).Length)
 
-    "$left$defaultStyle$(' ' * $spaces)$right`n$line ";
+    "$left$defaultStyle$(' ' * $spaces)$right`n$line "
 }
