@@ -34,7 +34,7 @@ function Get-OSIcon {
 }
 
 function Get-GitStatus {
-    $status = git status --porcelain 2> $null
+    $status = git --no-optional-locks status -sb --porcelain 2> $null
     if ($status) {
         $added = 0
         $modified = 0
@@ -43,6 +43,8 @@ function Get-GitStatus {
         $copied = 0
         $unmerged = 0
         $untracked = 0
+        $ahead = 0;
+        $behind = 0;
 
         $status -split "`n" | ForEach-Object {
             if ($_ -match "^\s*([AMDRCU?]+)\s+(.*)") {
@@ -58,6 +60,14 @@ function Get-GitStatus {
                     "??" { $untracked += 1 }
                 }
             }
+            elseif ($_ -match "(ahead|behind) (\d+)") {
+                $status = $Matches[1]
+                $count = $Matches[2]
+                switch ($status) {
+                    "ahead" { $ahead += $count }
+                    "behind" { $behind += $count }
+                }
+            }
         }
 
         $script:statusString = ""
@@ -67,6 +77,8 @@ function Get-GitStatus {
             $script:statusString += "$icon $count"
         }
 
+        Add-Status "" $ahead
+        Add-Status "" $behind
         Add-Status "" $added
         Add-Status "" $modified
         Add-Status "󰆴" $deleted
@@ -82,7 +94,7 @@ function Get-GitStatus {
 }
 
 function Get-GitBranch {
-    $branch = git rev-parse --abbrev-ref HEAD 2> $null
+    $branch = git --no-optional-locks rev-parse --abbrev-ref HEAD 2> $null
     if ($branch) {
         return "$flare_gitIcon $branch $(Get-GitStatus)"
     }
