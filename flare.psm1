@@ -4,7 +4,7 @@ $flare_promptTailLeft ??= "░▒▓"
 $flare_promptSeparatorsRight ??= ""
 $flare_promptHeadRight ??= ""
 $flare_promptTailRight ??= "▓▒░"
-$flare_gitIcon ??= ""
+$flare_gitIcon ??= ""
 
 function Get-LinuxDistro {
     $distro = "$(grep '^ID=' /etc/*release | cut -d'=' -f2)".Trim().ToLower()
