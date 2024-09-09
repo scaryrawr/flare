@@ -165,7 +165,7 @@ $escapeRegex = "(`e\[\d+\w)"
 function Get-LeftPrompt {
     $leftPieces = @(
         "$flare_osIcon"
-        "$($executionContext.SessionState.Path.CurrentLocation)"
+        "$($executionContext.SessionState.Path.CurrentLocation -replace $HOME, '~')"
         "$(Get-GitBranch)"
     )
 
