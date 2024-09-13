@@ -107,10 +107,15 @@ function Get-LastCommandTime {
     $lastCommand = Get-History -Count 1
     if (-not $lastCommand) { return "" }
 
-    $seconds = ($lastCommand.EndExecutionTime - $lastCommand.StartExecutionTime).TotalSeconds
+    $totalTime = ($lastCommand.EndExecutionTime - $lastCommand.StartExecutionTime)
+    $seconds = $totalTime.TotalSeconds
     if ($seconds -lt 0.25) { return "" }
 
-    $seconds.ToString("F2") + "s"
+    if ($seconds -lt 60) {
+        return $seconds.ToString("F2") + "s"
+    }
+
+    '{mm} min {ss}.{ff} sec' -f $TotalTime
 }
 
 $defaultStyle = "`e[0m"
