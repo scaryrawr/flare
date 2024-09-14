@@ -1,11 +1,3 @@
-$flare_promptSeparatorsLeft ??= ""
-$flare_promptHeadLeft ??= ""
-$flare_promptTailLeft ??= "░▒▓"
-$flare_promptSeparatorsRight ??= ""
-$flare_promptHeadRight ??= ""
-$flare_promptTailRight ??= "▓▒░"
-$flare_gitIcon ??= ""
-
 function Get-LinuxDistro {
     $distro = "$(grep '^ID=' /etc/*release | cut -d'=' -f2)".Trim().ToLower()
     if ($distro) {
@@ -32,6 +24,18 @@ function Get-OSIcon {
 
     return ""
 }
+
+$flare_promptSeparatorsLeft ??= ""
+$flare_promptHeadLeft ??= ""
+$flare_promptTailLeft ??= "░▒▓"
+$flare_promptSeparatorsRight ??= ""
+$flare_promptHeadRight ??= ""
+$flare_promptTailRight ??= "▓▒░"
+$flare_gitIcon ??= ""
+$flare_osIcon ??= "$(Get-OSIcon)"
+$flare_topPrefix ??= "╭─"
+$flare_bottomPrefix ??= "╰─"
+$flare_promptArrow ??= ""
 
 function Get-GitStatus {
     $status = git --no-optional-locks status -sb --porcelain 2> $null
@@ -112,10 +116,19 @@ function Get-LastCommandTime {
     if ($seconds -lt 0.25) { return "" }
 
     if ($seconds -lt 60) {
-        return $seconds.ToString("F2") + "s"
+        return $seconds.ToString("F2") + " s"
     }
 
-    '{mm} min {ss}.{ff} sec' -f $TotalTime
+    $minutes = [math]::Floor($seconds / 60)
+    $seconds = $seconds % 60
+    if ($minutes -lt 60) {
+        return "${minutes}m $($seconds.ToString('F2'))s"
+    }
+
+    $hours = [math]::Floor($minutes / 60)
+    $minutes = $minutes % 60
+
+    return "${hours}h ${minutes}m $($seconds.ToString('F2'))s"
 }
 
 $defaultStyle = "`e[0m"
@@ -159,10 +172,6 @@ $backgroundStyles = [ordered]@{
     'brightWhite'   = "`e[107m"
 }
 
-$flare_osIcon ??= "$(Get-OSIcon)"
-$flare_topPrefix ??= "╭─"
-$flare_bottomPrefix ??= "╰─"
-$flare_promptArrow ??= ""
 $flare_dateFormat ??= 'HH:mm:ss'
 
 $escapeRegex = "(`e\[\d+\w)"
@@ -172,7 +181,7 @@ function Get-LeftPrompt {
         "$flare_osIcon"
         "$($executionContext.SessionState.Path.CurrentLocation -replace $HOME, '~')"
         "$(Get-GitBranch)"
-    )
+    ) | Where-Object { $_ }
 
     $left = "${flare_topPrefix}"
 
@@ -184,10 +193,6 @@ function Get-LeftPrompt {
         $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - $(if (($count - 1) -gt 0) { $count - 1 } else { $count })) % $foregroundStyles.Count]
         $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$background$flare_promptSeparatorsLeft" } else { "$flare_promptTailLeft" })"
 
-        if (! $piece) {
-            continue
-        }
-
         $left += "$separator$background$foreground $piece "
         $count += 1
     }
@@ -198,9 +203,34 @@ function Get-LeftPrompt {
     $left
 }
 
+function Get-RightPrompt {
+    $rightPieces = @(
+        "$(Get-LastCommandTime)"
+        "$(Get-Date -Format $flare_dateFormat)"
+    ) | Where-Object { $_ }
+
+    $right = ""
+    $rightLength = $rightPieces.Length
+    $count = 0
+    foreach ($piece in $rightPieces) {
+        $background = $backgroundStyles.Values[($backgroundStyles.Count - ($rightLength - $count + 1)) % $backgroundStyles.Count]
+        $foreground = $foregroundStyles.Values[(1 + $rightLength - $count) % $foregroundStyles.Count]
+
+        $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - ($rightLength - $count + 1)) % $foregroundStyles.Count]
+        $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$flare_promptHeadRight" } else { "$flare_promptSeparatorsRight" })"
+
+        $right += "$separator$background$foreground $piece"
+        $count += 1
+    }
+
+    $foreground = $foregroundStyles.Values[($foregroundStyles.Count - ($rightLength - ($count - 2))) % $foregroundStyles.Count]
+    $right += "$($backgroundStyles['default'])$foreground$flare_promptTailRight"
+
+    $right
+}
 function Prompt {
     $left = Get-LeftPrompt
-    $right = "$(Get-LastCommandTime) $(Get-Date -Format $flare_dateFormat)"
+    $right = "$(Get-RightPrompt)"
     $line = "$defaultStyle$flare_bottomPrefix$($foregroundStyles.brightGreen)$($flare_promptArrow * ($nestedPromptLevel + 1))$defaultStyle"
 
     # Figure out spacing between left and right prompts
