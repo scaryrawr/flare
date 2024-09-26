@@ -179,7 +179,7 @@ $escapeRegex = "(`e\[\d+\w)"
 function Get-LeftPrompt {
     $leftPieces = @(
         "$flare_osIcon"
-        "$($executionContext.SessionState.Path.CurrentLocation -replace $HOME, '~')"
+        "$($executionContext.SessionState.Path.CurrentLocation.ToString().Replace($HOME, '~'))"
         "$(Get-GitBranch)"
     ) | Where-Object { $_ }
 
