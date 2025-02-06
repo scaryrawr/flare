@@ -2,15 +2,9 @@
   "name": "PowerShell",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
   "features": {
-    "ghcr.io/devcontainers/features/common-utils:2": {
-      "installZsh": "true",
-      "username": "vscode",
-      "upgradePackages": "false",
-      "nonFreePackages": "true"
-    },
+    "ghcr.io/devcontainers/features/common-utils:2": {},
     "ghcr.io/devcontainers/features/powershell:1": {}
   },
-
   "postCreateCommand": "sudo chsh vscode -s \"$(which pwsh)\"",
   "customizations": {
     "vscode": {
@@ -19,7 +13,5 @@
       },
       "extensions": ["ms-vscode.powershell"]
     }
-  },
-  "containerUser": "vscode",
-  "remoteUser": "vscode"
+  }
 }
