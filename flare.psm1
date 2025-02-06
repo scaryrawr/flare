@@ -109,29 +109,29 @@ function Get-LeftPrompt {
 
 function Get-RightPrompt {
     $rightPieces = @(
-        "$(Get-LastCommandTime)"
         "$(Get-Date -Format $flare_dateFormat)"
+        "$(Get-LastCommandTime)"
     ) | Where-Object { $_ }
 
     $right = ""
-    $rightLength = $rightPieces.Length
-    $count = 0
+    $count = 1
     foreach ($piece in $rightPieces) {
-        $background = $backgroundStyles.Values[($backgroundStyles.Count - ($rightLength - $count + 1)) % $backgroundStyles.Count]
-        $foreground = $foregroundStyles.Values[(1 + $rightLength - $count) % $foregroundStyles.Count]
+        $background = $backgroundStyles.Values[($backgroundStyles.Count - $count) % $backgroundStyles.Count]
+        $foreground = $foregroundStyles.Values[$count % $foregroundStyles.Count]
 
-        $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - ($rightLength - $count + 1)) % $foregroundStyles.Count]
-        $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$flare_promptHeadRight" } else { "$flare_promptSeparatorsRight" })"
+        $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - $(if (($count - 1) -gt 0) { $count - 1 } else { $count })) % $foregroundStyles.Count]
+        $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$background$flare_promptSeparatorsRight" } else { "$($backgroundStyles['default'])$flare_promptTailRight" })"
 
-        $right += "$separator$background$foreground $piece"
+        $right = "$background$foreground $piece $separator$right"
         $count += 1
     }
 
-    $foreground = $foregroundStyles.Values[($foregroundStyles.Count - ($rightLength - ($count - 2))) % $foregroundStyles.Count]
-    $right += "$($backgroundStyles['default'])$foreground$flare_promptTailRight"
+    $foreground = $foregroundStyles.Values[($foregroundStyles.Count - ($count - 1)) % $foregroundStyles.Count]
+    $right = "$($backgroundStyles['default'])$foreground$flare_promptSeparatorsRight$right"
 
     $right
 }
+
 function Prompt {
     $left = Get-LeftPrompt
     $right = "$(Get-RightPrompt)"
