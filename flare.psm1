@@ -38,14 +38,12 @@ function Get-LastCommandTime {
 $defaultStyle = "`e[0m"
 $foregroundStyles = [ordered]@{
     'default'       = "`e[39m"
-    'black'         = "`e[30m"
+    'white'         = "`e[37m"
     'red'           = "`e[31m"
-    'green'         = "`e[32m"
+    'black'         = "`e[30m"
     'yellow'        = "`e[33m"
-    'blue'          = "`e[34m"
     'magenta'       = "`e[35m"
     'cyan'          = "`e[36m"
-    'white'         = "`e[37m"
     'brightBlack'   = "`e[90m"
     'brightRed'     = "`e[91m"
     'brightGreen'   = "`e[92m"
@@ -53,19 +51,19 @@ $foregroundStyles = [ordered]@{
     'brightBlue'    = "`e[94m"
     'brightMagenta' = "`e[95m"
     'brightCyan'    = "`e[96m"
+    'green'         = "`e[32m"
+    'blue'          = "`e[34m"
     'brightWhite'   = "`e[97m"
 }
 
 $backgroundStyles = [ordered]@{
     'default'       = "`e[49m"
-    'black'         = "`e[40m"
+    'white'         = "`e[47m"
     'red'           = "`e[41m"
-    'green'         = "`e[42m"
+    'black'         = "`e[40m"
     'yellow'        = "`e[43m"
-    'blue'          = "`e[44m"
     'magenta'       = "`e[45m"
     'cyan'          = "`e[46m"
-    'white'         = "`e[47m"
     'brightBlack'   = "`e[100m"
     'brightRed'     = "`e[101m"
     'brightGreen'   = "`e[102m"
@@ -73,6 +71,8 @@ $backgroundStyles = [ordered]@{
     'brightBlue'    = "`e[104m"
     'brightMagenta' = "`e[105m"
     'brightCyan'    = "`e[106m"
+    'green'         = "`e[42m"
+    'blue'          = "`e[44m"
     'brightWhite'   = "`e[107m"
 }
 
@@ -135,7 +135,7 @@ function Get-RightPrompt {
 function Prompt {
     $left = Get-LeftPrompt
     $right = "$(Get-RightPrompt)"
-    $line = "$defaultStyle$flare_bottomPrefix$($foregroundStyles.brightGreen)$($flare_promptArrow * ($nestedPromptLevel + 1))$defaultStyle"
+    $line = "$defaultStyle$flare_bottomPrefix$($foregroundStyles['brightGreen'])$($flare_promptArrow * ($nestedPromptLevel + 1))$defaultStyle"
 
     # Figure out spacing between left and right prompts
     $width = $Host.UI.RawUI.WindowSize.Width
