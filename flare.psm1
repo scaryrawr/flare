@@ -92,7 +92,7 @@ function Get-LeftPrompt {
     $count = 1
     foreach ($piece in $leftPieces) {
         $background = $backgroundStyles.Values[($backgroundStyles.Count - $count) % $backgroundStyles.Count]
-        $foreground = $foregroundStyles['default']#$foregroundStyles.Values[$count % $foregroundStyles.Count]
+        $foreground = $foregroundStyles['brightBlack']#$foregroundStyles.Values[$count % $foregroundStyles.Count]
 
         $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - $(if (($count - 1) -gt 0) { $count - 1 } else { $count })) % $foregroundStyles.Count]
         $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$background$flare_promptSeparatorsLeft" } else { "$flare_promptTailLeft" })"
@@ -117,7 +117,7 @@ function Get-RightPrompt {
     $count = 1
     foreach ($piece in $rightPieces) {
         $background = $backgroundStyles.Values[($backgroundStyles.Count - $count) % $backgroundStyles.Count]
-        $foreground = $foregroundStyles['default']#$foregroundStyles.Values[$count % $foregroundStyles.Count]
+        $foreground = $foregroundStyles['brightBlack']#$foregroundStyles.Values[$count % $foregroundStyles.Count]
 
         $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - $(if (($count - 1) -gt 0) { $count - 1 } else { $count })) % $foregroundStyles.Count]
         $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$background$flare_promptSeparatorsRight" } else { "$($backgroundStyles['default'])$flare_promptTailRight" })"
