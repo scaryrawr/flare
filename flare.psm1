@@ -128,6 +128,13 @@ Set-PSReadLineKeyHandler -Key Enter -BriefDescription "Clear prompt and rewrite 
     [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState($inputLineRef, $cursorPositionRef)
     $inputLine = $inputLineRef.Value
 
+    # Check if the input is multiline
+    if ($inputLine -join '' -match "`n") {
+        # If multiline, invoke the default Enter key behavior without clearing the prompt
+        [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+        return
+    }
+
     # Move the cursor up by two lines to clear the two-line prompt
     [System.Console]::SetCursorPosition(0, [System.Console]::CursorTop - 1)
 
