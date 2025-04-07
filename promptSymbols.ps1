@@ -25,5 +25,8 @@ $global:flare_leftPieces ??= @(
 
 $global:flare_rightPieces ??= @(
   "date"
+  "node"
+  "rust"
+  "zig"
   "lastCommand"
 )
