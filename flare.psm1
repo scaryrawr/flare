@@ -132,14 +132,46 @@ function Get-RightPrompt {
     $right
 }
 
+function Get-PromptLine {
+    return "$defaultStyle$flare_bottomPrefix$($foregroundStyles['brightGreen'])$($flare_promptArrow * ($nestedPromptLevel + 1))$defaultStyle"
+}
+
 function Prompt {
     $left = Get-LeftPrompt
     $right = "$(Get-RightPrompt)"
-    $line = "$defaultStyle$flare_bottomPrefix$($foregroundStyles['brightGreen'])$($flare_promptArrow * ($nestedPromptLevel + 1))$defaultStyle"
+    $line = Get-PromptLine
 
     # Figure out spacing between left and right prompts
     $width = $Host.UI.RawUI.WindowSize.Width
     $spaces = $width - ($($left -replace $escapeRegex).Length + $($right -replace $escapeRegex).Length)
 
     "$left$defaultStyle$(' ' * $spaces)$right`n$line "
+}
+
+# Use Set-PSReadLineKeyHandler to clear the prompt and rewrite the user's input when the user submits a command
+Set-PSReadLineKeyHandler -Key Enter -BriefDescription "Clear prompt and rewrite input on Enter" -ScriptBlock {
+    # Prepare references for the input line and cursor position
+    $inputLineRef = [ref]''
+    $cursorPositionRef = [ref]0
+
+    # Retrieve the current input from the command line buffer using GetBufferState
+    [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState($inputLineRef, $cursorPositionRef)
+    $inputLine = $inputLineRef.Value
+
+    # Move the cursor up by two lines to clear the two-line prompt
+    [System.Console]::SetCursorPosition(0, [System.Console]::CursorTop - 1)
+
+    # Get the console width to overwrite the lines with spaces
+    $consoleWidth = [System.Console]::BufferWidth
+
+    # Clear the current line and the next line by overwriting with spaces
+    [System.Console]::Write(" " * $consoleWidth * 2)
+    #[System.Console]::Write(" " * $consoleWidth)
+    [System.Console]::SetCursorPosition(0, [System.Console]::CursorTop - 1)
+
+    # Rewrite the user's input prefixed with '>'
+    Write-Host "$(Get-PromptLine) $($inputLine -join '')" -NoNewline
+
+    # Execute the command by invoking the default Enter key behavior
+    [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
 }
