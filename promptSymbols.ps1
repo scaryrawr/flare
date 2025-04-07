@@ -1,5 +1,11 @@
 . $PSScriptRoot/osicon.ps1
 
+# Rounded corners for the prompt
+#$global:flare_promptSeparatorsLeft ??= ""
+#$global:flare_promptHeadLeft ??= ""
+#$global:flare_promptSeparatorsRight ??= ""
+#$global:flare_promptHeadRight ??= ""
+
 $global:flare_promptSeparatorsLeft ??= ""
 $global:flare_promptHeadLeft ??= ""
 $global:flare_promptTailLeft ??= "░▒▓"
