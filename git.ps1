@@ -57,3 +57,13 @@ function Get-GitStatus {
 
   return ""
 }
+
+function Get-GitBranch {
+  $branch = git --no-optional-locks rev-parse --abbrev-ref HEAD 2> $null
+  if ($branch) {
+    return "$flare_gitIcon $branch $(Get-GitStatus)"
+  }
+  else {
+    return ""
+  }
+}

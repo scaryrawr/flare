@@ -1,16 +1,6 @@
 . $PSScriptRoot/promptSymbols.ps1
 . $PSScriptRoot/git.ps1
 
-function Get-GitBranch {
-    $branch = git --no-optional-locks rev-parse --abbrev-ref HEAD 2> $null
-    if ($branch) {
-        return "$flare_gitIcon $branch $(Get-GitStatus)"
-    }
-    else {
-        return ""
-    }
-}
-
 function Get-LastCommandTime {
     $lastCommand = Get-History -Count 1
     if (-not $lastCommand) { return "" }
