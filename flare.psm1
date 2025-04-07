@@ -1,29 +1,4 @@
 . $PSScriptRoot/promptSymbols.ps1
-. $PSScriptRoot/git.ps1
-
-function Get-LastCommandTime {
-    $lastCommand = Get-History -Count 1
-    if (-not $lastCommand) { return "" }
-
-    $totalTime = ($lastCommand.EndExecutionTime - $lastCommand.StartExecutionTime)
-    $seconds = $totalTime.TotalSeconds
-    if ($seconds -lt 0.25) { return "" }
-
-    if ($seconds -lt 60) {
-        return $seconds.ToString("F2") + " s"
-    }
-
-    $minutes = [math]::Floor($seconds / 60)
-    $seconds = $seconds % 60
-    if ($minutes -lt 60) {
-        return "${minutes}m $($seconds.ToString('F2'))s"
-    }
-
-    $hours = [math]::Floor($minutes / 60)
-    $minutes = $minutes % 60
-
-    return "${hours}h ${minutes}m $($seconds.ToString('F2'))s"
-}
 
 $defaultStyle = "`e[0m"
 $foregroundStyles = [ordered]@{
@@ -66,16 +41,17 @@ $backgroundStyles = [ordered]@{
     'brightWhite'   = "`e[107m"
 }
 
-$flare_dateFormat ??= 'HH:mm:ss'
-
 $escapeRegex = "(`e\[\d+\w)"
 
 function Get-LeftPrompt {
-    $leftPieces = @(
-        "$flare_osIcon"
-        "$($executionContext.SessionState.Path.CurrentLocation.ToString().Replace($HOME, '~'))"
-        "$(Get-GitBranch)"
-    ) | Where-Object { $_ }
+    $leftPieces = ${flare_leftPieces} | ForEach-Object {
+        try {
+            & "$PSScriptRoot/pieces/$_.ps1" -ErrorAction SilentlyContinue
+        }
+        catch {
+            return ""
+        }
+    } | Where-Object { $_ }
 
     $left = "${flare_topPrefix}"
 
@@ -98,10 +74,14 @@ function Get-LeftPrompt {
 }
 
 function Get-RightPrompt {
-    $rightPieces = @(
-        "$(Get-Date -Format $flare_dateFormat)"
-        "$(Get-LastCommandTime)"
-    ) | Where-Object { $_ }
+    $rightPieces = ${flare_rightPieces} | ForEach-Object {
+        try {
+            & "$PSScriptRoot/pieces/$_.ps1" -ErrorAction SilentlyContinue
+        }
+        catch {
+            return ""
+        }
+    } | Where-Object { $_ }
 
     $right = ""
     $count = 1

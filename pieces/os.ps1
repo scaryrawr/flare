@@ -1,8 +1,18 @@
+function Get-LinuxDistro {
+  $distro = "$(grep '^ID=' /etc/*release | cut -d'=' -f2)".Trim().ToLower()
+  if ($distro) {
+    return $distro
+  }
+  else {
+    return "Linux"
+  }
+}
+
+
 function Get-OSIcon {
   if ($IsWindows -or $PSVersionTable.PSEdition -eq 'Desktop') { return "" }
   if ($IsMacOS) { return "" }
   if ($IsLinux) {
-    . $PSScriptRoot/linux/distro.ps1
     switch ($(Get-LinuxDistro)) {
       "arch" { return "" }
       "debian" { return "" }
@@ -15,3 +25,5 @@ function Get-OSIcon {
 
   return ""
 }
+
+Get-OSIcon

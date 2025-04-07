@@ -67,3 +67,5 @@ function Get-GitBranch {
     return ""
   }
 }
+
+Get-GitBranch

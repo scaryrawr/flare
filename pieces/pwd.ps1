@@ -1,0 +1,1 @@
+"$($executionContext.SessionState.Path.CurrentLocation.ToString().Replace($HOME, '~'))"
