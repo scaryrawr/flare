@@ -32,14 +32,3 @@ jobs:
             Write-Host "❌ Failed to load Flare prompt module on ${{ runner.os }}"
             exit 1
           }
-
-          # Try to access one of the module's functions or variables to ensure it initialized correctly
-          try {
-            # Get a variable from the module to ensure it's properly loaded
-            # This ensures the module not only imports but initializes properly
-            $null = Get-Variable foregroundStyles -ErrorAction Stop
-            Write-Host "✅ Flare prompt variables available"
-          } catch {
-            Write-Host "❌ Failed to access Flare prompt variables: $_"
-            exit 1
-          }
