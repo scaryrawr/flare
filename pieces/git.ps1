@@ -1,10 +1,5 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
-# Cache variables
-$global:flare_gitStatusCache = $null
-$global:flare_gitRepoCachePath = $null
-$global:flare_gitLastModified = $null
-
 function Get-GitStatus {  
   # Find git directory using FindFileInParentDirectories (faster than git command)
   $gitDir = FindFileInParentDirectories ".git"
@@ -35,20 +30,21 @@ function Get-GitStatus {
   if ($gitDirModified -gt $lastModified) { $lastModified = $gitDirModified }
   if ($remoteRefsModified -and $remoteRefsModified -gt $lastModified) { $lastModified = $remoteRefsModified }
   
-  if (($global:flare_gitRepoCachePath -ne $repoRoot) -or 
-      ($null -eq $global:flare_gitLastModified) -or 
-      ($lastModified -gt $global:flare_gitLastModified)) {
-    $global:flare_gitStatusCache = $null
+  $script:cacheLastModified ??= $null
+  if (($script:repoCachePath -ne $repoRoot) -or 
+      ($script:cacheLastModified -eq $null) -or 
+      ($lastModified -gt $script:cacheLastModified)) {
+    $script:statusCache = $null
   }
   
   # Return cached result if valid
-  if ($global:flare_gitStatusCache -ne $null) {
-    return $global:flare_gitStatusCache
+  if ($script:statusCache -ne $null) {
+    return $script:statusCache
   }
   
   # Update cache path and modification time
-  $global:flare_gitRepoCachePath = $repoRoot
-  $global:flare_gitLastModified = $lastModified
+  $script:repoCachePath = $repoRoot
+  $script:cacheLastModified = $lastModified
   
   # Get fresh git status
   $status = git --no-optional-locks status -sb --porcelain 2> $null
@@ -87,11 +83,11 @@ function Get-GitStatus {
       }
     }
 
-    $global:flare_gitStatusCache = ""
+    $script:statusCache = ""
     function Add-Status($icon, $count) {
       if ($count -eq 0) { return }
-      if ($global:flare_gitStatusCache) { $global:flare_gitStatusCache += " " }
-      $global:flare_gitStatusCache += "$icon $count"
+      if ($script:statusCache) { $script:statusCache += " " }
+      $script:statusCache += "$icon $count"
     }
 
     Add-Status "" $ahead
@@ -104,7 +100,7 @@ function Get-GitStatus {
     Add-Status "" $unmerged
     Add-Status "" $untracked
 
-    return $global:flare_gitStatusCache
+    return $script:statusCache
   }
 
   return ""
