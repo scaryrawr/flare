@@ -16,8 +16,17 @@ function Get-GitStatus {
   $repoModified = (Get-Item $repoRoot -Force).LastWriteTime
   $gitDirModified = (Get-Item $gitDir -Force).LastWriteTime
   
-  # Use whichever timestamp is more recent
-  $lastModified = if ($gitDirModified -gt $repoModified) { $gitDirModified } else { $repoModified }
+  # Also check HEAD and index files which change during push, pull, checkout operations
+  $headFile = Join-Path -Path $gitDir -ChildPath "HEAD"
+  $indexFile = Join-Path -Path $gitDir -ChildPath "index"
+  $headModified = if (Test-Path $headFile) { (Get-Item $headFile -Force).LastWriteTime } else { $null }
+  $indexModified = if (Test-Path $indexFile) { (Get-Item $indexFile -Force).LastWriteTime } else { $null }
+  
+  # Use the most recent timestamp of all checked files
+  $lastModified = $repoModified
+  if ($gitDirModified -gt $lastModified) { $lastModified = $gitDirModified }
+  if ($headModified -and $headModified -gt $lastModified) { $lastModified = $headModified }
+  if ($indexModified -and $indexModified -gt $lastModified) { $lastModified = $indexModified }
   
   if (($global:flare_gitRepoCachePath -ne $repoRoot) -or 
       ($null -eq $global:flare_gitLastModified) -or 
