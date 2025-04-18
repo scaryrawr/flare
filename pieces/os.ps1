@@ -9,7 +9,7 @@ function Get-LinuxDistro {
 }
 
 
-function Get-OSIcon {
+function flare_os {
   if ($IsWindows -or $PSVersionTable.PSEdition -eq 'Desktop') { return "" }
   if ($IsMacOS) { return "" }
   if ($IsLinux) {
@@ -25,5 +25,3 @@ function Get-OSIcon {
 
   return ""
 }
-
-Get-OSIcon

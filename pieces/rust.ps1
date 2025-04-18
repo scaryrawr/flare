@@ -1,15 +1,14 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
-function Get-RustVersion {
+function flare_rust {
   $cargoTomlPath = FindFileInParentDirectories -fileName "Cargo.toml"
+  $cwd = (Get-Location).Path
 
   if ($null -ne $cargoTomlPath) {
-    $rustVersion = rustc --version | Select-String -Pattern "(\d+\.\d+\.\d+)" | ForEach-Object { $_.Matches.Groups[1].Value }
+      $rustVersion = rustc --version | Select-String -Pattern "(\d+\.\d+\.\d+)" | ForEach-Object { $_.Matches.Groups[1].Value }
     return "󱘗 $rustVersion"
   }
   else {
     return ""
   }
 }
-
-Get-RustVersion

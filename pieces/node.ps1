@@ -1,6 +1,6 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
-function Get-NodeVersion {
+function flare_node {
   $packageJsonPath = FindFileInParentDirectories -fileName "package.json"
 
   if ($null -ne $packageJsonPath) {
@@ -11,5 +11,3 @@ function Get-NodeVersion {
     return ""
   }
 }
-
-Get-NodeVersion

@@ -1,4 +1,4 @@
-function Get-LastCommandTime {
+function flare_lastCommand {
   $lastCommand = Get-History -Count 1
   if (-not $lastCommand) { return "" }
 
@@ -21,5 +21,3 @@ function Get-LastCommandTime {
 
   return "${hours}h ${minutes}m $($seconds.ToString('F2'))s"
 }
-
-Get-LastCommandTime
