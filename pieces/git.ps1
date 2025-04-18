@@ -87,7 +87,7 @@ function Get-GitStatus {
     function Add-Status($icon, $count) {
       if ($count -eq 0) { return }
       if ($script:statusCache) { $script:statusCache += " " }
-      $script:statusCache += "$icon $count"
+      $script:statusCache += "$icon$count"
     }
 
     Add-Status "" $ahead
