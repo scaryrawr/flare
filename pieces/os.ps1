@@ -1,7 +1,7 @@
 function Get-LinuxDistro {
-  $distro = "$(grep '^ID=' /etc/*release | cut -d'=' -f2)".Trim().ToLower()
-  if ($distro) {
-    return $distro
+  $script:distro ??= "$(grep '^ID=' /etc/*release | cut -d'=' -f2)".Trim().ToLower()
+  if ($script:distro) {
+    return $script:distro
   }
   else {
     return "Linux"
