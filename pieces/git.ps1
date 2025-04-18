@@ -114,7 +114,12 @@ function flare_git {
   $branch = git --no-optional-locks rev-parse --abbrev-ref HEAD 2> $null
   if ($branch) {
     $flare_gitIcon ??= ''
-    return "$flare_gitIcon $branch $(Get-GitStatus)"
+    $gitStatus = Get-GitStatus
+    if ($gitStatus) {
+      return "$flare_gitIcon $branch $gitStatus"
+    } else {
+      return "$flare_gitIcon $branch"
+    }
   }
   else {
     return ""
