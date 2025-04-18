@@ -10,15 +10,18 @@ function Get-GitStatus {
   $gitDir = FindFileInParentDirectories ".git"
   if (-not $gitDir) { return "" }
 
-  # Set gitDir to the parent directory (the actual git repo root)
-  $gitDir = Split-Path -Parent $gitDir
+  $repoRoot = Split-Path -Parent $gitDir
   
-  # Check if we need to invalidate the cache
-  $currentTime = (Get-Item $gitDir -Force).LastWriteTime
+  # Get the most recent timestamp between repo root and .git directory
+  $repoModified = (Get-Item $repoRoot -Force).LastWriteTime
+  $gitDirModified = (Get-Item $gitDir -Force).LastWriteTime
   
-  if (($global:flare_gitRepoCachePath -ne $gitDir) -or 
-      ($global:flare_gitLastModified -eq $null) -or 
-      ($currentTime -gt $global:flare_gitLastModified)) {
+  # Use whichever timestamp is more recent
+  $lastModified = if ($gitDirModified -gt $repoModified) { $gitDirModified } else { $repoModified }
+  
+  if (($global:flare_gitRepoCachePath -ne $repoRoot) -or 
+      ($null -eq $global:flare_gitLastModified) -or 
+      ($lastModified -gt $global:flare_gitLastModified)) {
     $global:flare_gitStatusCache = $null
   }
   
@@ -28,8 +31,8 @@ function Get-GitStatus {
   }
   
   # Update cache path and modification time
-  $global:flare_gitRepoCachePath = $gitDir
-  $global:flare_gitLastModified = $currentTime
+  $global:flare_gitRepoCachePath = $repoRoot
+  $global:flare_gitLastModified = $lastModified
   
   # Get fresh git status
   $status = git --no-optional-locks status -sb --porcelain 2> $null
