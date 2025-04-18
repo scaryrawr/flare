@@ -1,0 +1,45 @@
+name: Validate Flare Prompt
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Flare loads successfully
+        shell: pwsh
+        run: |
+          # Import the module
+          Import-Module ${{ github.workspace }}/flare.psm1 -ErrorAction Stop
+
+          # Verify module was imported successfully
+          if ($?) {
+            Write-Host "✅ Flare prompt module loaded successfully on ${{ runner.os }}"
+          } else {
+            Write-Host "❌ Failed to load Flare prompt module on ${{ runner.os }}"
+            exit 1
+          }
+
+          # Try to access one of the module's functions or variables to ensure it initialized correctly
+          try {
+            # Get a variable from the module to ensure it's properly loaded
+            # This ensures the module not only imports but initializes properly
+            $null = Get-Variable foregroundStyles -ErrorAction Stop
+            Write-Host "✅ Flare prompt variables available"
+          } catch {
+            Write-Host "❌ Failed to access Flare prompt variables: $_"
+            exit 1
+          }
