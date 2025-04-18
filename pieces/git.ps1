@@ -16,17 +16,24 @@ function Get-GitStatus {
   $repoModified = (Get-Item $repoRoot -Force).LastWriteTime
   $gitDirModified = (Get-Item $gitDir -Force).LastWriteTime
   
-  # Also check HEAD and index files which change during push, pull, checkout operations
-  $headFile = Join-Path -Path $gitDir -ChildPath "HEAD"
-  $indexFile = Join-Path -Path $gitDir -ChildPath "index"
-  $headModified = if (Test-Path $headFile) { (Get-Item $headFile -Force).LastWriteTime } else { $null }
-  $indexModified = if (Test-Path $indexFile) { (Get-Item $indexFile -Force).LastWriteTime } else { $null }
+  # Check files that change during push, pull, checkout operations
+  $remoteRefsDir = Join-Path -Path $gitDir -ChildPath "refs/remotes"
+  
+  # Check for any changes in remote refs (updated during push)
+  $remoteRefsModified = $null
+  if (Test-Path $remoteRefsDir) {
+    $latestRemoteRef = Get-ChildItem -Path $remoteRefsDir -Recurse -File | 
+                     Sort-Object LastWriteTime -Descending | 
+                     Select-Object -First 1 -ExpandProperty LastWriteTime
+    if ($latestRemoteRef) {
+      $remoteRefsModified = $latestRemoteRef
+    }
+  }
   
   # Use the most recent timestamp of all checked files
   $lastModified = $repoModified
   if ($gitDirModified -gt $lastModified) { $lastModified = $gitDirModified }
-  if ($headModified -and $headModified -gt $lastModified) { $lastModified = $headModified }
-  if ($indexModified -and $indexModified -gt $lastModified) { $lastModified = $indexModified }
+  if ($remoteRefsModified -and $remoteRefsModified -gt $lastModified) { $lastModified = $remoteRefsModified }
   
   if (($global:flare_gitRepoCachePath -ne $repoRoot) -or 
       ($null -eq $global:flare_gitLastModified) -or 
