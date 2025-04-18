@@ -31,6 +31,8 @@ function Get-GitStatus {
   if ($remoteRefsModified -and $remoteRefsModified -gt $lastModified) { $lastModified = $remoteRefsModified }
   
   $script:cacheLastModified ??= $null
+  $script:repoCachePath ??= $null
+  $script:statusCache ??= $null
   if (($script:repoCachePath -ne $repoRoot) -or 
       ($script:cacheLastModified -eq $null) -or 
       ($lastModified -gt $script:cacheLastModified)) {
