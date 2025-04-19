@@ -6,6 +6,9 @@ $cachedTimes = @()
 
 Import-Module "$PSScriptRoot/flare.psm1" -Force -DisableNameChecking
 
+# Initial call for getting sub-scripts to cache
+$null = Prompt
+
 # Test with SL locally since it's the most expensive
 # z sl
 
