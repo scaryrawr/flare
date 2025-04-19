@@ -24,3 +24,5 @@ Write-Host "Prompt timing over $iterations runs:"
 Write-Host "  Average: $([math]::Round($avg,2)) ms"
 Write-Host "  Min:     $([math]::Round($min,2)) ms"
 Write-Host "  Max:     $([math]::Round($max,2)) ms"
+
+"$(Prompt)"
