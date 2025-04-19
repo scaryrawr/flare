@@ -1,0 +1,49 @@
+name: Validate Flare Prompt
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate Flare loads successfully
+        shell: pwsh
+        run: |
+          # Import the module
+          Import-Module ${{ github.workspace }}/flare.psm1 -ErrorAction Stop
+
+          # Verify module was imported successfully
+          if ($?) {
+            Write-Host "✅ Flare prompt module loaded successfully on ${{ runner.os }}"
+          } else {
+            Write-Host "❌ Failed to load Flare prompt module on ${{ runner.os }}"
+            exit 1
+          }
+
+      - name: Validate all Flare pieces work correctly
+        shell: pwsh
+        run: |
+          # Run the testPiecesTiming.ps1 script which will validate all pieces
+          # The script will exit with a non-zero code if any piece fails to load or execute correctly
+          Write-Host "Running piece validation test on ${{ runner.os }}..."
+          & ${{ github.workspace }}/testPiecesTiming.ps1
+
+          if ($?) {
+            Write-Host "✅ All Flare pieces validated successfully on ${{ runner.os }}"
+          } else {
+            Write-Host "❌ Flare piece validation failed on ${{ runner.os }}"
+            exit 1
+          }

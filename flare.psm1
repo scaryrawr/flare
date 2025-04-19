@@ -43,10 +43,15 @@ $backgroundStyles = [ordered]@{
 
 $escapeRegex = "(`e\[\d+\w)"
 
+$flare_leftPieces | ForEach-Object {
+    . "$PSScriptRoot/pieces/$_.ps1"
+}
+
 function Get-LeftPrompt {
-    $leftPieces = ${flare_leftPieces} | ForEach-Object {
+    $leftPieces = $flare_leftPieces | ForEach-Object {
         try {
-            & "$PSScriptRoot/pieces/$_.ps1" -ErrorAction SilentlyContinue
+            $command = "flare_$_"
+            & $command -ErrorAction SilentlyContinue
         }
         catch {
             return ""
@@ -58,11 +63,9 @@ function Get-LeftPrompt {
     $count = 1
     foreach ($piece in $leftPieces) {
         $background = $backgroundStyles.Values[($backgroundStyles.Count - $count) % $backgroundStyles.Count]
-        $foreground = $foregroundStyles['brightBlack']#$foregroundStyles.Values[$count % $foregroundStyles.Count]
-
+        $foreground = $foregroundStyles['brightBlack']
         $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - $(if (($count - 1) -gt 0) { $count - 1 } else { $count })) % $foregroundStyles.Count]
         $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$background$flare_promptSeparatorsLeft" } else { "$flare_promptTailLeft" })"
-
         $left += "$separator$background$foreground $piece "
         $count += 1
     }
@@ -73,10 +76,15 @@ function Get-LeftPrompt {
     $left
 }
 
+$flare_rightPieces | ForEach-Object {
+    . "$PSScriptRoot/pieces/$_.ps1"
+}
+
 function Get-RightPrompt {
-    $rightPieces = ${flare_rightPieces} | ForEach-Object {
+    $rightPieces = $flare_rightPieces | ForEach-Object {
         try {
-            & "$PSScriptRoot/pieces/$_.ps1" -ErrorAction SilentlyContinue
+            $command = "flare_$_"
+            & $command -ErrorAction SilentlyContinue
         }
         catch {
             return ""
@@ -87,11 +95,9 @@ function Get-RightPrompt {
     $count = 1
     foreach ($piece in $rightPieces) {
         $background = $backgroundStyles.Values[($backgroundStyles.Count - $count) % $backgroundStyles.Count]
-        $foreground = $foregroundStyles['brightBlack']#$foregroundStyles.Values[$count % $foregroundStyles.Count]
-
+        $foreground = $foregroundStyles['brightBlack']
         $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - $(if (($count - 1) -gt 0) { $count - 1 } else { $count })) % $foregroundStyles.Count]
         $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$background$flare_promptSeparatorsRight" } else { "$($backgroundStyles['default'])$flare_promptTailRight" })"
-
         $right = "$background$foreground $piece $separator$right"
         $count += 1
     }
@@ -108,7 +114,8 @@ function Get-PromptLine {
 
 function Prompt {
     $left = Get-LeftPrompt
-    $right = "$(Get-RightPrompt)"
+    $right = Get-RightPrompt
+
     $line = Get-PromptLine
 
     # Figure out spacing between left and right prompts

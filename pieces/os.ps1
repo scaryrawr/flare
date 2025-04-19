@@ -1,7 +1,7 @@
 function Get-LinuxDistro {
-  $distro = "$(grep '^ID=' /etc/*release | cut -d'=' -f2)".Trim().ToLower()
-  if ($distro) {
-    return $distro
+  $script:distro ??= "$(grep '^ID=' /etc/*release | cut -d'=' -f2)".Trim().ToLower()
+  if ($script:distro) {
+    return $script:distro
   }
   else {
     return "Linux"
@@ -9,7 +9,7 @@ function Get-LinuxDistro {
 }
 
 
-function Get-OSIcon {
+function flare_os {
   if ($IsWindows -or $PSVersionTable.PSEdition -eq 'Desktop') { return "" }
   if ($IsMacOS) { return "" }
   if ($IsLinux) {
@@ -25,5 +25,3 @@ function Get-OSIcon {
 
   return ""
 }
-
-Get-OSIcon
