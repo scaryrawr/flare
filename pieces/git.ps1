@@ -62,51 +62,108 @@ function Get-GitStatus {
   if (-not $gitDir) { return "" }
 
   $repoRoot = Split-Path -Parent $gitDir
-  
-  # Get the most recent timestamp between repo root and .git directory
-  $repoModified = (Get-Item $repoRoot -Force).LastWriteTime
-  $gitDirModified = (Get-Item $gitDir -Force).LastWriteTime
-  
-  # Check files that change during push, pull, checkout operations
-  $remoteRefsDir = Join-Path -Path $gitDir -ChildPath "refs/remotes"
-  
-  # Check for any changes in remote refs (updated during push)
-  $remoteRefsModified = $null
-  if (Test-Path $remoteRefsDir) {
-    $latestRemoteRef = Get-ChildItem -Path $remoteRefsDir -Recurse -File | 
-    Sort-Object LastWriteTime -Descending | 
-    Select-Object -First 1 -ExpandProperty LastWriteTime
-    if ($latestRemoteRef) {
-      $remoteRefsModified = $latestRemoteRef
-    }
-  }
-  
-  # Use the most recent timestamp of all checked files
-  $lastModified = $repoModified
-  if ($gitDirModified -gt $lastModified) { $lastModified = $gitDirModified }
-  if ($remoteRefsModified -and $remoteRefsModified -gt $lastModified) { $lastModified = $remoteRefsModified }
-  
-  $script:cacheLastModified ??= $null
-  $script:repoCachePath ??= $null
+
+  # Initialize cache variables if they don't exist
   $script:statusCache ??= $null
+  $script:repoCachePath ??= $null
+  $script:cacheSignature ??= $null
+  
+  # Get current repository signature based on key files that change during git operations
+  $currentSignature = Get-RepoSignature -GitDir $gitDir -RepoRoot $repoRoot
+  
+  # Check if we need to invalidate the cache
+  $cacheInvalid = $false
+  
+  # Invalidate cache if:
+  # 1. Different repository
+  # 2. No cached signature
+  # 3. Signature has changed
   if (($script:repoCachePath -ne $repoRoot) -or 
-    ($null -eq $script:cacheLastModified) -or 
-    ($lastModified -gt $script:cacheLastModified)) {
-    $script:statusCache = $null
+    ($null -eq $script:cacheSignature) -or 
+    ($currentSignature -ne $script:cacheSignature)) {
+    $cacheInvalid = $true
   }
   
   # Return cached result if valid
-  if ($null -ne $script:statusCache) {
+  if (-not $cacheInvalid -and ($null -ne $script:statusCache)) {
     return $script:statusCache
   }
   
-  # Update cache path and modification time
+  # Update cache information
   $script:repoCachePath = $repoRoot
-  $script:cacheLastModified = $lastModified
+  $script:cacheSignature = $currentSignature
   
   # Get fresh git status
   $script:statusCache = Get-GitStatusRaw
   return $script:statusCache
+}
+
+# Helper function to generate a signature for the repository state
+function Get-RepoSignature {
+  param (
+    [string]$GitDir,
+    [string]$RepoRoot
+  )
+  
+  $signature = ""
+  
+  # Check critical git files that change during operations
+  $indexFile = Join-Path -Path $GitDir -ChildPath "index"
+  $headFile = Join-Path -Path $GitDir -ChildPath "HEAD"
+  
+  # Add index file timestamp if it exists
+  if (Test-Path $indexFile) {
+    $indexModified = (Get-Item $indexFile -Force).LastWriteTime.Ticks
+    $signature += "idx:$indexModified;"
+  }
+  
+  # Add HEAD file timestamp if it exists
+  if (Test-Path $headFile) {
+    $headModified = (Get-Item $headFile -Force).LastWriteTime.Ticks
+    $signature += "head:$headModified;"
+  }
+  
+  # Check refs directories for branch and remote changes
+  $refsHeads = Join-Path -Path $GitDir -ChildPath "refs/heads"
+  $refsRemotes = Join-Path -Path $GitDir -ChildPath "refs/remotes"
+  
+  # Add latest ref modification time from local branches
+  if (Test-Path $refsHeads) {
+    $latestHeadRef = Get-ChildItem -Path $refsHeads -Recurse -File -ErrorAction SilentlyContinue | 
+    Sort-Object LastWriteTime -Descending | 
+    Select-Object -First 1 -ExpandProperty LastWriteTime -ErrorAction SilentlyContinue
+    if ($latestHeadRef) {
+      $signature += "localref:$($latestHeadRef.Ticks);"
+    }
+  }
+  
+  # Add latest ref modification time from remote branches
+  if (Test-Path $refsRemotes) {
+    $latestRemoteRef = Get-ChildItem -Path $refsRemotes -Recurse -File -ErrorAction SilentlyContinue | 
+    Sort-Object LastWriteTime -Descending | 
+    Select-Object -First 1 -ExpandProperty LastWriteTime -ErrorAction SilentlyContinue
+    if ($latestRemoteRef) {
+      $signature += "remoteref:$($latestRemoteRef.Ticks);"
+    }
+  }
+  
+  # Add working directory timestamp (to catch unstaged changes)
+  $workingDirTimestamp = (Get-ChildItem -Path $RepoRoot -Recurse -File -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -notlike "$GitDir*" } |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1 -ExpandProperty LastWriteTime -ErrorAction SilentlyContinue)
+  
+  if ($workingDirTimestamp) {
+    $signature += "work:$($workingDirTimestamp.Ticks);"
+  }
+  
+  # Fall back to checking if the git directory itself changed if signature is empty
+  if (-not $signature) {
+    $gitDirModified = (Get-Item $GitDir -Force).LastWriteTime.Ticks
+    $signature = "gitdir:$gitDirModified"
+  }
+  
+  return $signature
 }
 
 function flare_git {
