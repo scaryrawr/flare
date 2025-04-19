@@ -44,7 +44,7 @@ foreach ($pieceFile in $pieceFiles) {
             Average = 0
             Minimum = 0
             Maximum = 0
-            Status = "Failed"
+            Status  = "Failed"
         }
         continue
     }
@@ -57,7 +57,8 @@ foreach ($pieceFile in $pieceFiles) {
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         try {
             $null = & $functionName -ErrorAction Stop
-        } catch {
+        }
+        catch {
             # If a piece function fails, track it and count the failure
             Write-Host "  ❌ Error executing $functionName on iteration ${i}: $_" -ForegroundColor Red
             $pieceFailures++
@@ -70,7 +71,8 @@ foreach ($pieceFile in $pieceFiles) {
     # Report if this piece had any failures
     if ($pieceFailures -gt 0) {
         Write-Host "  ❌ $pieceName had $pieceFailures failures out of $iterations iterations" -ForegroundColor Red
-    } else {
+    }
+    else {
         Write-Host "  ✅ $pieceName executed successfully for all iterations" -ForegroundColor Green
     }
     
@@ -84,7 +86,7 @@ foreach ($pieceFile in $pieceFiles) {
         Average = $avg
         Minimum = $min
         Maximum = $max
-        Status = if ($pieceFailures -gt 0) { "Failed ($pieceFailures failures)" } else { "Success" }
+        Status  = if ($pieceFailures -gt 0) { "Failed ($pieceFailures failures)" } else { "Success" }
     }
     
     # Print individual piece results
@@ -124,7 +126,8 @@ if (-not (Get-Command Prompt -ErrorAction SilentlyContinue)) {
     $fullMin = 0
     $fullMax = 0
     $promptStatus = "Failed"
-} else {
+}
+else {
     $fullTimes = @()
     $fullPromptFailures = 0
     
@@ -132,7 +135,8 @@ if (-not (Get-Command Prompt -ErrorAction SilentlyContinue)) {
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         try {
             $null = Prompt -ErrorAction Stop
-        } catch {
+        }
+        catch {
             Write-Host "  ❌ Error executing full Prompt on iteration ${i}: $_" -ForegroundColor Red
             $fullPromptFailures++
             $anyFailures = $true
@@ -149,7 +153,8 @@ if (-not (Get-Command Prompt -ErrorAction SilentlyContinue)) {
     # Report if full prompt had any failures
     if ($fullPromptFailures -gt 0) {
         Write-Host "  ❌ Full Prompt had $fullPromptFailures failures out of $iterations iterations" -ForegroundColor Red
-    } else {
+    }
+    else {
         Write-Host "  ✅ Full Prompt executed successfully for all iterations" -ForegroundColor Green
     }
 }
@@ -161,7 +166,7 @@ Write-Host "  Full Prompt Max:     $([math]::Round($fullMax,2)) ms"
 Write-Host "  Status:              $promptStatus" -ForegroundColor $statusColor
 
 # Calculate the sum of individual pieces
-$sumAvg = ($sortedResults | Measure-Object -Property {$_.Value.Average} -Sum).Sum
+$sumAvg = ($sortedResults | Measure-Object -Property { $_.Value.Average } -Sum).Sum
 Write-Host ""
 Write-Host "Sum of individual pieces: $([math]::Round($sumAvg,2)) ms"
 Write-Host "Overhead (full - sum):    $([math]::Round($fullAvg - $sumAvg,2)) ms"
@@ -171,7 +176,10 @@ Write-Host ""
 if ($anyFailures) {
     Write-Host "❌ TEST FAILED: One or more pieces or the full prompt failed to load or execute correctly" -ForegroundColor Red
     exit 1
-} else {
+}
+else {
     Write-Host "✅ TEST PASSED: All pieces and the full prompt loaded and executed successfully" -ForegroundColor Green
     exit 0
 }
+
+"$(Prompt)"
