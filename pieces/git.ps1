@@ -1,6 +1,62 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
-function Get-GitStatus {  
+function Get-GitStatusRaw {
+  $status = git --no-optional-locks status -sb --porcelain 2> $null
+  $added = 0
+  $modified = 0
+  $deleted = 0
+  $renamed = 0
+  $copied = 0
+  $unmerged = 0
+  $untracked = 0
+  $ahead = 0;
+  $behind = 0;
+
+  $status -split "`n" | ForEach-Object {
+    if ($_ -match "^\s*([AMDRCU?]+)\s+(.*)") {
+      # $file = $Matches[2]
+      $status = $Matches[1]
+      switch ($status) {
+        "A" { $added += 1 }
+        "M" { $modified += 1 }
+        "D" { $deleted += 1 }
+        "R" { $renamed += 1 }
+        "C" { $copied += 1 }
+        "U" { $unmerged += 1 }
+        "??" { $untracked += 1 }
+      }
+    }
+    elseif ($_ -match "(ahead|behind) (\d+)") {
+      $status = $Matches[1]
+      $count = $Matches[2]
+      switch ($status) {
+        "ahead" { $ahead += $count }
+        "behind" { $behind += $count }
+      }
+    }
+  }
+
+  $script:statusBuilder = ""
+  function Add-Status($icon, $count) {
+    if ($count -eq 0) { return }
+    if ($script:statusBuilder) { $script:statusBuilder += " " }
+    $script:statusBuilder += "$icon$count"
+  }
+
+  Add-Status "" $ahead
+  Add-Status "" $behind
+  Add-Status "" $added
+  Add-Status "" $modified
+  Add-Status "󰆴" $deleted
+  Add-Status "󰑕" $renamed
+  Add-Status "" $copied
+  Add-Status "" $unmerged
+  Add-Status "" $untracked
+
+  return $script:statusBuilder
+}
+
+function Get-GitStatus {
   # Find git directory using FindFileInParentDirectories (faster than git command)
   $gitDir = FindFileInParentDirectories ".git"
   if (-not $gitDir) { return "" }
@@ -18,8 +74,8 @@ function Get-GitStatus {
   $remoteRefsModified = $null
   if (Test-Path $remoteRefsDir) {
     $latestRemoteRef = Get-ChildItem -Path $remoteRefsDir -Recurse -File | 
-                     Sort-Object LastWriteTime -Descending | 
-                     Select-Object -First 1 -ExpandProperty LastWriteTime
+    Sort-Object LastWriteTime -Descending | 
+    Select-Object -First 1 -ExpandProperty LastWriteTime
     if ($latestRemoteRef) {
       $remoteRefsModified = $latestRemoteRef
     }
@@ -34,13 +90,13 @@ function Get-GitStatus {
   $script:repoCachePath ??= $null
   $script:statusCache ??= $null
   if (($script:repoCachePath -ne $repoRoot) -or 
-      ($script:cacheLastModified -eq $null) -or 
-      ($lastModified -gt $script:cacheLastModified)) {
+    ($null -eq $script:cacheLastModified) -or 
+    ($lastModified -gt $script:cacheLastModified)) {
     $script:statusCache = $null
   }
   
   # Return cached result if valid
-  if ($script:statusCache -ne $null) {
+  if ($null -ne $script:statusCache) {
     return $script:statusCache
   }
   
@@ -49,63 +105,8 @@ function Get-GitStatus {
   $script:cacheLastModified = $lastModified
   
   # Get fresh git status
-  $status = git --no-optional-locks status -sb --porcelain 2> $null
-  if ($status) {
-    $added = 0
-    $modified = 0
-    $deleted = 0
-    $renamed = 0
-    $copied = 0
-    $unmerged = 0
-    $untracked = 0
-    $ahead = 0;
-    $behind = 0;
-
-    $status -split "`n" | ForEach-Object {
-      if ($_ -match "^\s*([AMDRCU?]+)\s+(.*)") {
-        # $file = $Matches[2]
-        $status = $Matches[1]
-        switch ($status) {
-          "A" { $added += 1 }
-          "M" { $modified += 1 }
-          "D" { $deleted += 1 }
-          "R" { $renamed += 1 }
-          "C" { $copied += 1 }
-          "U" { $unmerged += 1 }
-          "??" { $untracked += 1 }
-        }
-      }
-      elseif ($_ -match "(ahead|behind) (\d+)") {
-        $status = $Matches[1]
-        $count = $Matches[2]
-        switch ($status) {
-          "ahead" { $ahead += $count }
-          "behind" { $behind += $count }
-        }
-      }
-    }
-
-    $script:statusCache = ""
-    function Add-Status($icon, $count) {
-      if ($count -eq 0) { return }
-      if ($script:statusCache) { $script:statusCache += " " }
-      $script:statusCache += "$icon$count"
-    }
-
-    Add-Status "" $ahead
-    Add-Status "" $behind
-    Add-Status "" $added
-    Add-Status "" $modified
-    Add-Status "󰆴" $deleted
-    Add-Status "󰑕" $renamed
-    Add-Status "" $copied
-    Add-Status "" $unmerged
-    Add-Status "" $untracked
-
-    return $script:statusCache
-  }
-
-  return ""
+  $script:statusCache = Get-GitStatusRaw
+  return $script:statusCache
 }
 
 function flare_git {
@@ -119,7 +120,8 @@ function flare_git {
     $gitStatus = Get-GitStatus
     if ($gitStatus) {
       return "$flare_gitIcon $branch $gitStatus"
-    } else {
+    }
+    else {
       return "$flare_gitIcon $branch"
     }
   }
