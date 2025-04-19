@@ -47,3 +47,18 @@ jobs:
             Write-Host "❌ Flare piece validation failed on ${{ runner.os }}"
             exit 1
           }
+
+      - name: Validate Git Status functionality
+        shell: pwsh
+        run: |
+          # Run the testGitStatus.ps1 script which validates Git status functionality
+          # The script will exit with a non-zero code if any comparison fails
+          Write-Host "Running Git status validation test on ${{ runner.os }}..."
+          & ${{ github.workspace }}/testGitStatus.ps1
+
+          if ($?) {
+            Write-Host "✅ Git status functionality validated successfully on ${{ runner.os }}"
+          } else {
+            Write-Host "❌ Git status validation failed on ${{ runner.os }}"
+            exit 1
+          }
