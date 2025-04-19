@@ -5,7 +5,7 @@ $times = @()
 Import-Module "$PSScriptRoot/flare.psm1" -Force
 
 # Test with SL locally since it's the most expensive
-z sl
+# z sl
 
 for ($i = 0; $i -lt $iterations; $i++) {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -14,7 +14,7 @@ for ($i = 0; $i -lt $iterations; $i++) {
     $times += $sw.Elapsed.TotalMilliseconds
 }
 
-cd -
+# cd -
 
 $avg = ($times | Measure-Object -Average).Average
 $min = ($times | Measure-Object -Minimum).Minimum
