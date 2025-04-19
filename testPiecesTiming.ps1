@@ -30,6 +30,8 @@ Write-Host ""
 # z sl
 
 foreach ($pieceFile in $pieceFiles) {
+    . $pieceFile.FullName -ErrorAction Stop
+
     # Get piece name without extension
     $pieceName = [System.IO.Path]::GetFileNameWithoutExtension($pieceFile.Name)
     $functionName = "flare_$pieceName"
