@@ -107,17 +107,17 @@ function flare_git {
   $gitDir = FindFileInParentDirectories ".git"
   if (-not $gitDir) { return "" }
     
-  $flare_gitIcon ??= ''
+  $global:flare_gitIcon ??= ''
     
   # Get branch and status from cache
   $gitInfo = Get-GitBranchAndStatus
     
   if ($gitInfo.Branch) {
     if ($gitInfo.Status) {
-      return "$flare_gitIcon $($gitInfo.Branch) $($gitInfo.Status)"
+      return "$global:flare_gitIcon $($gitInfo.Branch) $($gitInfo.Status)"
     }
     else {
-      return "$flare_gitIcon $($gitInfo.Branch)"
+      return "$global:flare_gitIcon $($gitInfo.Branch)"
     }
   }
   else {
