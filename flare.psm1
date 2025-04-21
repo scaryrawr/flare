@@ -55,10 +55,10 @@ $flare_leftPieces | ForEach-Object {
 
 function Get-LeftPrompt {
     # If immediate mode is requested, always calculate
-    param([switch]$NoCache)
+    param([switch]$UseCache)
     
     # Return cached prompt if available and not explicitly bypassing cache
-    if (-not $NoCache -and $script:cachedLeftPrompt -and -not $script:needsRedraw) {
+    if ($UseCache -and $script:cachedLeftPrompt -and -not $script:needsRedraw) {
         return $script:cachedLeftPrompt
     }
     
@@ -88,9 +88,7 @@ function Get-LeftPrompt {
     $left += "$($backgroundStyles['default'])$foreground$flare_promptHeadLeft"
 
     # Cache the left prompt if we're doing a full calculation (not a quick default)
-    if (-not $NoCache) {
-        $script:cachedLeftPrompt = $left
-    }
+    $script:cachedLeftPrompt = $left
 
     $left
 }
@@ -101,10 +99,10 @@ $flare_rightPieces | ForEach-Object {
 
 function Get-RightPrompt {
     # If immediate mode is requested, always calculate
-    param([switch]$NoCache)
+    param([switch]$UseCache)
     
     # Return cached prompt if available and not explicitly bypassing cache
-    if (-not $NoCache -and $script:cachedRightPrompt -and -not $script:needsRedraw) {
+    if ($UseCache -and $script:cachedRightPrompt -and -not $script:needsRedraw) {
         return $script:cachedRightPrompt
     }
     
@@ -133,9 +131,7 @@ function Get-RightPrompt {
     $right = "$($backgroundStyles['default'])$foreground$flare_promptSeparatorsRight$right"
 
     # Cache the right prompt if we're doing a full calculation (not a quick default)
-    if (-not $NoCache) {
-        $script:cachedRightPrompt = $right
-    }
+    $script:cachedRightPrompt = $right
 
     $right
 }
@@ -147,8 +143,8 @@ function Get-PromptLine {
 function Prompt {
     # First time or when redraw is needed, use cached values (or lightweight defaults if no cache)
     $useCache = -not $script:needsRedraw
-    $left = Get-LeftPrompt -NoCache:(-not $useCache)
-    $right = Get-RightPrompt -NoCache:(-not $useCache)
+    $left = Get-LeftPrompt -UseCache:$useCache
+    $right = Get-RightPrompt -UseCache:$useCache
 
     $line = Get-PromptLine
 
@@ -168,8 +164,8 @@ function Prompt {
         Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -MaxTriggerCount 1 -Action {
             try {
                 # Calculate new prompt pieces in the background
-                $newLeft = Get-LeftPrompt -NoCache
-                $newRight = Get-RightPrompt -NoCache
+                $newLeft = Get-LeftPrompt
+                $newRight = Get-RightPrompt
                 
                 # Only redraw if the prompt has changed
                 $currentLeft = $script:cachedLeftPrompt
@@ -203,15 +199,6 @@ function Reset-FlarePromptCache {
 # Register handler to reset prompt cache after command execution
 $ExecutionContext.SessionState.Module.OnRemove = {
     Remove-Module PSReadLine
-}
-
-# Hook into PSReadLine to reset prompt cache after command execution
-$scriptBlock = {
-    param($key, $arg)
-    # Force recalculation on next prompt
-    Reset-FlarePromptCache
-    # Call original AcceptLine
-    [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
 }
 
 # Add module exports
