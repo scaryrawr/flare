@@ -147,8 +147,8 @@ function Get-PromptLine {
 function Prompt {
     # First time or when redraw is needed, use cached values (or lightweight defaults if no cache)
     $useCache = -not $script:needsRedraw
-    $left = Get-LeftPrompt
-    $right = Get-RightPrompt
+    $left = Get-LeftPrompt -NoCache:(-not $useCache)
+    $right = Get-RightPrompt -NoCache:(-not $useCache)
 
     $line = Get-PromptLine
 
