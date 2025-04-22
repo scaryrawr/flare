@@ -7,6 +7,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Cancel in-progress runs on subsequent pushes to the same PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     name: Validate on ${{ matrix.os }}
@@ -25,7 +30,7 @@ jobs:
           elif [ "$RUNNER_OS" == "macOS" ]; then
             brew install zig
           elif [ "$RUNNER_OS" == "Linux" ]; then
-            snap install zig --beta --classic
+            sudo snap install zig --beta --classic
           else
             echo "Unsupported runner OS"
             exit 1
