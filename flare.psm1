@@ -1,11 +1,5 @@
 . $PSScriptRoot/promptSymbols.ps1
 
-# Cache variables for prompt pieces
-$script:cachedLeftPrompt = $null
-$script:cachedRightPrompt = $null
-$script:isCalculating = $false
-$script:needsRedraw = $false
-
 $defaultStyle = "`e[0m"
 $foregroundStyles = [ordered]@{
     'default'       = "`e[39m"
@@ -54,14 +48,6 @@ $flare_leftPieces | ForEach-Object {
 }
 
 function Get-LeftPrompt {
-    # If immediate mode is requested, always calculate
-    param([switch]$UseCache)
-    
-    # Return cached prompt if available and not explicitly bypassing cache
-    if ($UseCache -and $script:cachedLeftPrompt -and -not $script:needsRedraw) {
-        return $script:cachedLeftPrompt
-    }
-    
     $leftPieces = $flare_leftPieces | ForEach-Object {
         try {
             $command = "flare_$_"
@@ -87,10 +73,7 @@ function Get-LeftPrompt {
     $foreground = $foregroundStyles.Values[($foregroundStyles.Count - ($count - 1)) % $foregroundStyles.Count]
     $left += "$($backgroundStyles['default'])$foreground$flare_promptHeadLeft"
 
-    # Cache the left prompt if we're doing a full calculation (not a quick default)
-    $script:cachedLeftPrompt = $left
-
-    $left
+    return $left
 }
 
 $flare_rightPieces | ForEach-Object {
@@ -98,14 +81,6 @@ $flare_rightPieces | ForEach-Object {
 }
 
 function Get-RightPrompt {
-    # If immediate mode is requested, always calculate
-    param([switch]$UseCache)
-    
-    # Return cached prompt if available and not explicitly bypassing cache
-    if ($UseCache -and $script:cachedRightPrompt -and -not $script:needsRedraw) {
-        return $script:cachedRightPrompt
-    }
-    
     $rightPieces = $flare_rightPieces | ForEach-Object {
         try {
             $command = "flare_$_"
@@ -130,10 +105,7 @@ function Get-RightPrompt {
     $foreground = $foregroundStyles.Values[($foregroundStyles.Count - ($count - 1)) % $foregroundStyles.Count]
     $right = "$($backgroundStyles['default'])$foreground$flare_promptSeparatorsRight$right"
 
-    # Cache the right prompt if we're doing a full calculation (not a quick default)
-    $script:cachedRightPrompt = $right
-
-    $right
+    return $right
 }
 
 function Get-PromptLine {
@@ -141,10 +113,8 @@ function Get-PromptLine {
 }
 
 function Prompt {
-    # First time or when redraw is needed, use cached values (or lightweight defaults if no cache)
-    $useCache = -not $script:needsRedraw
-    $left = Get-LeftPrompt -UseCache:$useCache
-    $right = Get-RightPrompt -UseCache:$useCache
+    $left = Get-LeftPrompt
+    $right = Get-RightPrompt
 
     $line = Get-PromptLine
 
@@ -155,54 +125,11 @@ function Prompt {
     # Ensure spaces is not negative
     if ($spaces -lt 0) { $spaces = 0 }
 
-    # Schedule async calculation and redraw if not currently calculating
-    if (-not $script:isCalculating) {
-        $script:isCalculating = $true
-        $script:needsRedraw = $true
-        
-        # Register our idle callback to calculate and redraw the prompt
-        Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -MaxTriggerCount 1 -Action {
-            try {
-                # Calculate new prompt pieces in the background
-                $newLeft = Get-LeftPrompt
-                $newRight = Get-RightPrompt
-                
-                # Only redraw if the prompt has changed
-                $currentLeft = $script:cachedLeftPrompt
-                $currentRight = $script:cachedRightPrompt
-                
-                if ($currentLeft -ne $newLeft -or $currentRight -ne $newRight) {
-                    # Update the cached values
-                    $script:cachedLeftPrompt = $newLeft
-                    $script:cachedRightPrompt = $newRight
-                    
-                    # Force the prompt to redraw with new values
-                    [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
-                }
-            }
-            finally {
-                $script:isCalculating = $false
-                $script:needsRedraw = $false
-            }
-        } | Out-Null
-    }
-
     "$left$defaultStyle$(' ' * $spaces)$right`n$line "
 }
 
-# Force a prompt recalculation on the next prompt display
-function Reset-FlarePromptCache {
-    $script:needsRedraw = $true
-    $script:isCalculating = $false
-}
-
-# Register handler to reset prompt cache after command execution
-$ExecutionContext.SessionState.Module.OnRemove = {
-    Remove-Module PSReadLine
-}
-
 # Add module exports
-Export-ModuleMember -Function @('Prompt', 'Reset-FlarePromptCache')
+Export-ModuleMember -Function @('Prompt')
 
 # Use Set-PSReadLineKeyHandler to clear the prompt and rewrite the user's input when the user submits a command
 Set-PSReadLineKeyHandler -Key Enter -BriefDescription "Clear prompt and rewrite input on Enter" -ScriptBlock {
@@ -229,13 +156,10 @@ Set-PSReadLineKeyHandler -Key Enter -BriefDescription "Clear prompt and rewrite 
 
     # Clear the current line and the next line by overwriting with spaces
     [System.Console]::Write(" " * $consoleWidth * 2)
-    [System.Console]::SetCursorPosition(0, [System.Console]::CursorTop - 1)
-
+    
     # Rewrite the user's input prefixed with '>'
+    [System.Console]::SetCursorPosition(0, [System.Console]::CursorTop - 1)
     Write-Host "$(Get-PromptLine) $($inputLine -join '')" -NoNewline
-
-    # Reset the prompt cache to force recalculation on next display
-    Reset-FlarePromptCache
 
     # Execute the command by invoking the default Enter key behavior
     [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()

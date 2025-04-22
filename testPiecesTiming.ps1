@@ -27,7 +27,7 @@ Write-Host "Testing individual pieces performance..."
 Write-Host ""
 
 # Test with SL locally since it's the most expensive
-# z sl
+z ../sl
 
 foreach ($pieceFile in $pieceFiles) {
     . $pieceFile.FullName -ErrorAction Stop
@@ -98,8 +98,6 @@ foreach ($pieceFile in $pieceFiles) {
     Write-Host "  Status:  $($results[$pieceName].Status)"
     Write-Host ""
 }
-
-# cd -
 
 # Sort results by average execution time (descending)
 $sortedResults = $results.GetEnumerator() | Sort-Object { $_.Value.Average } -Descending
@@ -175,6 +173,11 @@ Write-Host "Overhead (full - sum):    $([math]::Round($fullAvg - $sumAvg,2)) ms"
 
 # Provide final summary and exit with appropriate code
 Write-Host ""
+
+z flare
+
+"$(Prompt)"
+
 if ($anyFailures) {
     Write-Host "❌ TEST FAILED: One or more pieces or the full prompt failed to load or execute correctly" -ForegroundColor Red
     exit 1
@@ -183,5 +186,3 @@ else {
     Write-Host "✅ TEST PASSED: All pieces and the full prompt loaded and executed successfully" -ForegroundColor Green
     exit 0
 }
-
-"$(Prompt)"
