@@ -7,17 +7,35 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Cancel in-progress runs on subsequent pushes to the same PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     name: Validate on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Zig
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            choco install zig
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            brew install zig
+          elif [ "$RUNNER_OS" == "Linux" ]; then
+            sudo snap install zig --beta --classic
+          else
+            echo "Unsupported runner OS"
+            exit 1
+          fi
+        shell: bash
 
       - name: Validate Flare loads successfully
         shell: pwsh

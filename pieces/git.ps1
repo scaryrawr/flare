@@ -99,6 +99,11 @@ function Format-GitStatus {
 
 # Optimized function to get both branch and status in one call
 function Get-GitBranchAndStatus {
+  # Check if git command is available
+  if ($null -eq (Get-Command git -ErrorAction SilentlyContinue)) {
+    return @{ Branch = $null; Status = $null }
+  }
+
   # Find git directory using FindFileInParentDirectories (faster than git command)
   $gitDir = FindFileInParentDirectories ".git"
 
