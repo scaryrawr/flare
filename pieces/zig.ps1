@@ -23,6 +23,11 @@ function Test-IsZigWorkspace {
 }
 
 function flare_zig {
+  # Check if zig command is available
+  if ($null -eq (Get-Command zig -ErrorAction SilentlyContinue)) {
+    return ""
+  }
+
   $buildZigPath = FindFileInParentDirectories -fileName "build.zig"
   $buildZigZonPath = FindFileInParentDirectories -fileName "build.zig.zon"
   

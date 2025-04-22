@@ -24,6 +24,11 @@ function Test-IsWorkspace {
 }
 
 function flare_node {
+  # Check if node command is available
+  if ($null -eq (Get-Command node -ErrorAction SilentlyContinue)) {
+    return ""
+  }
+
   $packageJsonPath = FindFileInParentDirectories -fileName "package.json"
   $nvmrcPath = FindFileInParentDirectories -fileName ".nvmrc"
 

@@ -22,6 +22,11 @@ function Test-IsRustWorkspace {
 }
 
 function flare_rust {
+  # Check if rustc command is available
+  if ($null -eq (Get-Command rustc -ErrorAction SilentlyContinue)) {
+    return ""
+  }
+
   $cargoTomlPath = FindFileInParentDirectories -fileName "Cargo.toml"
   $toolchainPath = FindFileInParentDirectories -fileName "rust-toolchain.toml"
   
