@@ -6,7 +6,7 @@ function flare_zig {
   if ($null -ne $buildZigPath) {
     # Cache miss, get the version
     $zigVersion = zig version
-    return " $zigVersion"
+    return " $zigVersion"
   }
   else {
     return ""
