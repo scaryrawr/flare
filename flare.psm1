@@ -43,8 +43,27 @@ $backgroundStyles = [ordered]@{
 
 $escapeRegex = "(`e\[\d+\w)"
 
-$flare_leftPieces | ForEach-Object {
-    . "$PSScriptRoot/pieces/$_.ps1"
+# Store pieces that have been initialized for cleanup later
+$script:initializedPieces = @()
+
+@($flare_leftPieces, $flare_rightPieces) | ForEach-Object {
+    $_ | ForEach-Object {
+        . "$PSScriptRoot/pieces/$_.ps1"
+        if (Get-Command "flare_init_$_" -ErrorAction SilentlyContinue) {
+            & "flare_init_$_"
+            $script:initializedPieces += $_
+        }
+    }
+}
+
+# Register a cleanup event that runs when the module is removed
+$MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
+    # Call cleanup functions for each piece that was initialized
+    foreach ($piece in $script:initializedPieces) {
+        if (Get-Command "flare_cleanup_$piece" -ErrorAction SilentlyContinue) {
+            & "flare_cleanup_$piece"
+        }
+    }
 }
 
 function Get-LeftPrompt {
@@ -74,10 +93,6 @@ function Get-LeftPrompt {
     $left += "$($backgroundStyles['default'])$foreground$flare_promptHeadLeft"
 
     return $left
-}
-
-$flare_rightPieces | ForEach-Object {
-    . "$PSScriptRoot/pieces/$_.ps1"
 }
 
 function Get-RightPrompt {
