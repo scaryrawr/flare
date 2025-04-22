@@ -51,14 +51,21 @@ function Format-GitStatus {
     if ($_ -match "^\s*([AMDRCU?]+)\s+(.*)") {
       # $file = $Matches[2]
       $status = $Matches[1]
-      switch ($status) {
-        "A" { $added += 1 }
-        "M" { $modified += 1 }
-        "D" { $deleted += 1 }
-        "R" { $renamed += 1 }
-        "C" { $copied += 1 }
-        "U" { $unmerged += 1 }
-        "??" { $untracked += 1 }
+      
+      # Handle unmerged files (conflicts) with priority
+      if ($status -match "U" -or $status -match "U{2,}|A{2,}|D{2,}") {
+        $unmerged += 1
+      }
+      # Handle other standard statuses
+      else {
+        switch ($status) {
+          "A" { $added += 1 }
+          "M" { $modified += 1 }
+          "D" { $deleted += 1 }
+          "R" { $renamed += 1 }
+          "C" { $copied += 1 }
+          "??" { $untracked += 1 }
+        }
       }
     }
     elseif ($_ -match "(ahead|behind) (\d+)") {
