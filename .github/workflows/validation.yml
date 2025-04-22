@@ -25,9 +25,7 @@ jobs:
           elif [ "$RUNNER_OS" == "macOS" ]; then
             brew install zig
           elif [ "$RUNNER_OS" == "Linux" ]; then
-            # Source Homebrew for Linux (needed as it doesn't happen by default)
-            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-            brew install zig
+            snap install zig --beta --classic
           else
             echo "Unsupported runner OS"
             exit 1
@@ -37,23 +35,6 @@ jobs:
       - name: Validate Flare loads successfully
         shell: pwsh
         run: |
-          # For Linux, make sure Homebrew is in the PATH so we can find Zig
-          if ($env:RUNNER_OS -eq "Linux") {
-            $brewEnv = bash -c "/home/linuxbrew/.linuxbrew/bin/brew shellenv"
-            foreach ($line in $brewEnv) {
-              if ($line -match "export ([^=]+)=(.*)") {
-                $varName = $matches[1]
-                $varValue = $matches[2].Trim('"')
-                [Environment]::SetEnvironmentVariable($varName, $varValue)
-                # Also update the PATH for this session if needed
-                if ($varName -eq "PATH") {
-                  $env:PATH = $varValue
-                }
-              }
-            }
-            Write-Host "Added Homebrew to environment for Linux"
-          }
-
           # Import the module
           Import-Module ${{ github.workspace }}/flare.psm1 -ErrorAction Stop
 
@@ -68,23 +49,6 @@ jobs:
       - name: Validate all Flare pieces work correctly
         shell: pwsh
         run: |
-          # For Linux, make sure Homebrew is in the PATH so we can find Zig
-          if ($env:RUNNER_OS -eq "Linux") {
-            $brewEnv = bash -c "/home/linuxbrew/.linuxbrew/bin/brew shellenv"
-            foreach ($line in $brewEnv) {
-              if ($line -match "export ([^=]+)=(.*)") {
-                $varName = $matches[1]
-                $varValue = $matches[2].Trim('"')
-                [Environment]::SetEnvironmentVariable($varName, $varValue)
-                # Also update the PATH for this session if needed
-                if ($varName -eq "PATH") {
-                  $env:PATH = $varValue
-                }
-              }
-            }
-            Write-Host "Added Homebrew to environment for Linux"
-          }
-
           # Run the testPiecesTiming.ps1 script which will validate all pieces
           # The script will exit with a non-zero code if any piece fails to load or execute correctly
           Write-Host "Running piece validation test on ${{ runner.os }}..."
