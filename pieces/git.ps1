@@ -1,4 +1,3 @@
-# filepath: /Users/mike/GitHub/flare/pieces/git.ps1
 . $PSScriptRoot/../utils/fileUtils.ps1
 
 # Script level variables to track git state
