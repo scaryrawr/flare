@@ -1,6 +1,99 @@
 # filepath: /Users/mike/GitHub/flare/testPiecesTiming.ps1
 # Measure the execution time of individual prompt pieces
 
+# Set up a temporary test environment
+function New-TestEnvironment {
+    Write-Host "Creating temporary test environment..." -ForegroundColor Cyan
+    
+    # Create a temporary directory
+    $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "flare_test_$(Get-Random)"
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    
+    # Initialize git repo in temp directory
+    Push-Location $tempDir
+    git init --quiet
+    git config --local user.name "Flare Test"
+    git config --local user.email "test@example.com"
+    
+    # Create initial commit to have a valid git repo
+    "# Flare Test Repo" | Out-File -FilePath "README.md" -Encoding utf8
+    git add README.md
+    git commit -m "Initial commit" --quiet
+    
+    # Create package.json for node.ps1 piece
+    @'
+{
+  "name": "flare-test",
+  "version": "1.0.0",
+  "description": "Test file to trigger node.ps1 piece",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "MIT"
+}
+'@ | Out-File -FilePath "package.json" -Encoding utf8
+    
+    # Create Cargo.toml for rust.ps1 piece
+    @'
+[package]
+name = "flare-test"
+version = "0.1.0"
+edition = "2021"
+description = "Test file to trigger rust.ps1 piece"
+license = "MIT"
+
+[dependencies]
+'@ | Out-File -FilePath "Cargo.toml" -Encoding utf8
+    
+    # Create build.zig for zig.ps1 piece
+    @'
+const std = @import("std");
+
+// Simple build.zig file to trigger the zig.ps1 piece
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const exe = b.addExecutable(.{
+        .name = "flare-test", 
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    b.installArtifact(exe);
+}
+'@ | Out-File -FilePath "build.zig" -Encoding utf8
+    
+    # Add files to git to ensure git status shows something
+    git add package.json Cargo.toml build.zig
+    git commit -m "Add project files" --quiet
+    
+    # Make a change to trigger git status
+    "# Modified" | Add-Content -Path "README.md" -Encoding utf8
+    
+    Pop-Location
+    
+    Write-Host "✅ Temporary test environment created at $tempDir" -ForegroundColor Green
+    return $tempDir
+}
+
+# Clean up the test environment
+function Remove-TestEnvironment {
+    param(
+        [string]$TempDir
+    )
+    
+    Write-Host "Cleaning up temporary test environment..." -ForegroundColor Cyan
+    
+    if (Test-Path $TempDir) {
+        Remove-Item -Path $TempDir -Recurse -Force
+        Write-Host "✅ Temporary test environment removed" -ForegroundColor Green
+    }
+}
+
 # Import the module to access all pieces
 try {
     Import-Module "$PSScriptRoot/flare.psm1" -Force -ErrorAction Stop
@@ -25,6 +118,11 @@ $anyFailures = $false
 
 Write-Host "Testing individual pieces performance..."
 Write-Host ""
+
+# Create and move to temporary test environment
+$originalLocation = Get-Location
+$tempTestDir = New-TestEnvironment
+Set-Location $tempTestDir
 
 # Test with SL locally since it's the most expensive
 # z sl
@@ -174,6 +272,10 @@ Write-Host "Sum of individual pieces: $([math]::Round($sumAvg,2)) ms"
 Write-Host "Overhead (full - sum):    $([math]::Round($fullAvg - $sumAvg,2)) ms"
 
 "$(Prompt)"
+
+# Return to original location and clean up
+Set-Location $originalLocation
+Remove-TestEnvironment -TempDir $tempTestDir
 
 # Provide final summary and exit with appropriate code
 Write-Host ""
