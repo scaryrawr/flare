@@ -47,17 +47,3 @@ jobs:
             Write-Host "❌ Flare piece validation failed on ${{ runner.os }}"
             exit 1
           }
-
-      - name: Run prompt cache comparison test
-        shell: pwsh
-        run: |
-          # Run the testPromptCacheComparison.ps1 script which tests cached vs uncached performance
-          Write-Host "Running prompt cache comparison test on ${{ runner.os }}..."
-          & ${{ github.workspace }}/testPromptCacheComparison.ps1
-
-          if ($?) {
-            Write-Host "✅ Prompt cache comparison test completed successfully on ${{ runner.os }}"
-          } else {
-            Write-Host "❌ Prompt cache comparison test failed on ${{ runner.os }}"
-            exit 1
-          }

@@ -173,6 +173,8 @@ Write-Host ""
 Write-Host "Sum of individual pieces: $([math]::Round($sumAvg,2)) ms"
 Write-Host "Overhead (full - sum):    $([math]::Round($fullAvg - $sumAvg,2)) ms"
 
+"$(Prompt)"
+
 # Provide final summary and exit with appropriate code
 Write-Host ""
 if ($anyFailures) {
@@ -183,5 +185,3 @@ else {
     Write-Host "✅ TEST PASSED: All pieces and the full prompt loaded and executed successfully" -ForegroundColor Green
     exit 0
 }
-
-"$(Prompt)"
