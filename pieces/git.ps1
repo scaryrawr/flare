@@ -300,8 +300,7 @@ function Format-GitOutput {
 }
 
 function Test-GitStatusUpdateNeeded {
-  $currentTime = [int](Get-Date -UFormat '%s')
-  return ($currentTime - $script:lastGitCheck) -ge $script:gitEventThrottleSeconds
+  return (-not $script:cachedGitInfo.Branch) -and (-not $script:cachedGitInfo.Status)
 }
 
 function flare_git {
