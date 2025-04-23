@@ -5,10 +5,8 @@ function flare_pwd {
   # Replace home path with ~
   $currentPath = $currentPath.Replace($userHome, '~')
   
-  $sep = [System.IO.Path]::DirectorySeparatorChar
-  
   # Split the path and handle empty parts (from absolute paths)
-  $parts = $currentPath -split $sep
+  $parts = $currentPath -split [regex]::Escape([System.IO.Path]::DirectorySeparatorChar)
   
   # Process path parts with pipeline
   $i = 0
@@ -26,5 +24,5 @@ function flare_pwd {
   }
   
   # Join the parts back together
-  " $($result -join $sep)"
+  " $($result -join [System.IO.Path]::DirectorySeparatorChar)"
 }
