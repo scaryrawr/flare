@@ -38,5 +38,5 @@ function flare_pwd {
   }
   
   # Join the parts back together
-  $result -join $sep
+  " $($result -join $sep)"
 }
