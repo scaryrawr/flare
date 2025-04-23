@@ -152,33 +152,43 @@ function flare_init_git {
   
   # Configure the FileSystemWatcher
   try {
-    $script:gitFileWatcher = New-Object System.IO.FileSystemWatcher
-    $script:gitFileWatcher.Path = $repoDir
-    $script:gitFileWatcher.IncludeSubdirectories = $true
-    
-    # Watch for any changes that might affect git status
-    $script:gitFileWatcher.NotifyFilter = [System.IO.NotifyFilters]::FileName -bor 
-    [System.IO.NotifyFilters]::DirectoryName -bor
-    [System.IO.NotifyFilters]::LastWrite -bor
-    [System.IO.NotifyFilters]::CreationTime
-    
-    # Register for change events
-    $writeHandler = {
-      # Throttle updates to prevent excessive git operations
-      $currentTime = [int](Get-Date -UFormat '%s')
-      if (($currentTime - $script:lastGitCheck) -ge $script:gitEventThrottleSeconds) {
-        Update-GitStatus -GitRepoPath $script:currentGitDir
-      }
+    # Reuse existing watcher if possible
+    if ($script:gitFileWatcher) {
+      # Just update the path of the existing watcher
+      $script:gitFileWatcher.EnableRaisingEvents = $false
+      $script:gitFileWatcher.Path = $repoDir
+      $script:gitFileWatcher.EnableRaisingEvents = $true
     }
-    
-    # Register events - changes to files and directories will trigger the same handler
-    $null = Register-ObjectEvent -InputObject $script:gitFileWatcher -EventName Created -Action $writeHandler
-    $null = Register-ObjectEvent -InputObject $script:gitFileWatcher -EventName Changed -Action $writeHandler
-    $null = Register-ObjectEvent -InputObject $script:gitFileWatcher -EventName Deleted -Action $writeHandler
-    $null = Register-ObjectEvent -InputObject $script:gitFileWatcher -EventName Renamed -Action $writeHandler
-    
-    # Enable the watcher
-    $script:gitFileWatcher.EnableRaisingEvents = $true
+    else {
+      # Create new watcher only if one doesn't exist
+      $script:gitFileWatcher = New-Object System.IO.FileSystemWatcher
+      $script:gitFileWatcher.Path = $repoDir
+      $script:gitFileWatcher.IncludeSubdirectories = $true
+      
+      # Watch for any changes that might affect git status
+      $script:gitFileWatcher.NotifyFilter = [System.IO.NotifyFilters]::FileName -bor 
+      [System.IO.NotifyFilters]::DirectoryName -bor
+      [System.IO.NotifyFilters]::LastWrite -bor
+      [System.IO.NotifyFilters]::CreationTime
+      
+      # Register for change events
+      $writeHandler = {
+        # Throttle updates to prevent excessive git operations
+        $currentTime = [int](Get-Date -UFormat '%s')
+        if (($currentTime - $script:lastGitCheck) -ge $script:gitEventThrottleSeconds) {
+          Update-GitStatus -GitRepoPath $script:currentGitDir
+        }
+      }
+      
+      # Register events - changes to files and directories will trigger the same handler
+      $null = Register-ObjectEvent -InputObject $script:gitFileWatcher -EventName Created -Action $writeHandler
+      $null = Register-ObjectEvent -InputObject $script:gitFileWatcher -EventName Changed -Action $writeHandler
+      $null = Register-ObjectEvent -InputObject $script:gitFileWatcher -EventName Deleted -Action $writeHandler
+      $null = Register-ObjectEvent -InputObject $script:gitFileWatcher -EventName Renamed -Action $writeHandler
+      
+      # Enable the watcher
+      $script:gitFileWatcher.EnableRaisingEvents = $true
+    }
     
     # Initialize cached git status
     Update-GitStatus -GitRepoPath $repoDir
@@ -219,18 +229,18 @@ function flare_git {
   }
   
   $repoDir = Split-Path -Parent $gitDir
-  $global:flare_gitIcon ??= ''
+  $global:flare_gitIcon ??= ''
   
-  # Check if we need to create or update the watcher
-  if (-not $script:gitFileWatcher -or $script:currentGitDir -ne $repoDir) {
-    # Clean up existing watcher if we're in a different repo
-    if ($script:gitFileWatcher) {
-      flare_cleanup_git
-    }
-    
-    # Create new watcher for current repo
+  # Check if we need to initialize or update the watcher
+  if (-not $script:gitFileWatcher) {
+    # Initialize the watcher if it doesn't exist
     $script:currentGitDir = $repoDir
     flare_init_git
+  }
+  # Only update if we've changed directories
+  elseif ($script:currentGitDir -ne $repoDir) {
+    $script:currentGitDir = $repoDir
+    flare_init_git  # This will now reuse the existing watcher
   }
   
   # Check if we should force an update of the git status
