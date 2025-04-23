@@ -7,7 +7,7 @@ function flare_lastCommand {
   if ($seconds -lt 0.25) { return "" }
 
   if ($seconds -lt 60) {
-    return $seconds.ToString("F2") + " s"
+    return $seconds.ToString("F2") + "s"
   }
 
   $minutes = [math]::Floor($seconds / 60)
