@@ -1,4 +1,4 @@
 function flare_date {
-  $flare_dateFormat ??= 'HH:mm:ss'
-  return Get-Date -Format $flare_dateFormat
+  $global:flare_dateFormat ??= 'HH:mm:ss'
+  return Get-Date -Format $global:flare_dateFormat
 }
