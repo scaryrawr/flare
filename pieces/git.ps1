@@ -112,23 +112,53 @@ function Get-GitBranchAndStatus {
     return @{ Branch = $null; Status = $null }
   }
 
-  # Cache is invalid, get fresh data (one git call instead of two)
-  $output = git --no-optional-locks status -sb --porcelain 2> $null
+  # Try to get branch name directly from git files (no git command needed)
+  $branch = $null
+  
+  # Check if we're on a branch or in a detached HEAD state
+  $headFile = Join-Path -Path $gitDir -ChildPath "HEAD"
+  if (Test-Path $headFile) {
+    $headContent = Get-Content -Path $headFile -Raw
     
-  # Extract branch name from the first line
-  # Format is usually "## branch...origin/branch [ahead/behind]"
-  $branch = if ($output -and $output -is [array]) {
-    if ($output[0] -match '## (.+?)(?:\.\.\.|$)') {
+    # Check if we have a direct reference to a branch
+    if ($headContent -match "ref: refs/heads/(.+)$") {
+      $branch = $Matches[1]
+    }
+    # If not a symbolic ref (detached HEAD), use abbreviated commit hash
+    elseif ($headContent -match "^([0-9a-f]+)") {
+      $commitHash = $Matches[1].Substring(0, 7)  # Use first 7 chars
+      $branch = "detached@$commitHash"
+    }
+  }
+
+  # If we couldn't determine branch from HEAD file, fallback to git command
+  if (-not $branch) {
+    # Cache is invalid, get fresh data (one git call instead of two)
+    $output = git --no-optional-locks status -sb --porcelain 2> $null
+      
+    # Extract branch name from the first line
+    # Format is usually "## branch...origin/branch [ahead/behind]"
+    $branch = if ($output -and $output -is [array]) {
+      if ($output[0] -match '## (.+?)(?:\.\.\.|$)') {
+        $Matches[1]
+      }
+      else { $null }
+    }
+    elseif ($output -and $output -is [string] -and $output -match '## (.+?)(?:\.\.\.|$)') {
       $Matches[1]
     }
-    else { $null }
-  }
-  elseif ($output -and $output -is [string] -and $output -match '## (.+?)(?:\.\.\.|$)') {
-    $Matches[1]
+    else {
+      # Fallback if status -sb doesn't work for some reason
+      git --no-optional-locks rev-parse --abbrev-ref HEAD 2> $null
+    }
+    
+    # Process status information using existing Format-GitStatus logic
+    $status = Format-GitStatus -StatusOutput $output
   }
   else {
-    # Fallback if status -sb doesn't work for some reason
-    git --no-optional-locks rev-parse --abbrev-ref HEAD 2> $null
+    # If we got the branch without git command, we still need status info
+    $output = git --no-optional-locks status -sb --porcelain 2> $null
+    $status = Format-GitStatus -StatusOutput $output
   }
     
   # Process status information using existing Format-GitStatus logic
@@ -217,61 +247,90 @@ function flare_cleanup_git {
   $script:cachedGitInfo = @{ Branch = $null; Status = $null }
 }
 
-function flare_git {
+function Get-GitRepoPath {
   # Find git directory using FindFileInParentDirectories (faster than git command)
   $gitDir = FindFileInParentDirectories ".git"
   if (-not $gitDir) { 
-    # Not in a git repo, clean up if needed
+    return $null
+  }
+  
+  return Split-Path -Parent $gitDir
+}
+
+function Update-GitWatcher {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepoPath
+  )
+  
+  # Check if we need to initialize or update the watcher
+  if (-not $script:gitFileWatcher) {
+    # Initialize the watcher if it doesn't exist
+    $script:currentGitDir = $RepoPath
+    flare_init_git
+  }
+  # Only update if we've changed directories
+  elseif ($script:currentGitDir -ne $RepoPath) {
+    $script:currentGitDir = $RepoPath
+    flare_init_git  # This will reuse the existing watcher
+  }
+}
+
+function Format-GitOutput {
+  param(
+    [Parameter(Mandatory = $false)]
+    [string]$Branch,
+    
+    [Parameter(Mandatory = $false)]
+    [string]$Status
+  )
+  
+  $global:flare_gitIcon ??= ''
+  
+  if (-not $Branch) {
+    return ""
+  }
+  
+  if ($Status) {
+    return "$global:flare_gitIcon $Branch $Status"
+  }
+  else {
+    return "$global:flare_gitIcon $Branch"
+  }
+}
+
+function Test-GitStatusUpdateNeeded {
+  $currentTime = [int](Get-Date -UFormat '%s')
+  return ($currentTime - $script:lastGitCheck) -ge $script:gitEventThrottleSeconds
+}
+
+function flare_git {
+  # Get repository path
+  $repoPath = Get-GitRepoPath
+  
+  # Not in a git repo, clean up if needed
+  if (-not $repoPath) { 
     if ($script:gitFileWatcher) {
       flare_cleanup_git
     }
     return "" 
   }
   
-  $repoDir = Split-Path -Parent $gitDir
-  $global:flare_gitIcon ??= ''
-  
-  # Check if we need to initialize or update the watcher
-  if (-not $script:gitFileWatcher) {
-    # Initialize the watcher if it doesn't exist
-    $script:currentGitDir = $repoDir
-    flare_init_git
-  }
-  # Only update if we've changed directories
-  elseif ($script:currentGitDir -ne $repoDir) {
-    $script:currentGitDir = $repoDir
-    flare_init_git  # This will now reuse the existing watcher
-  }
+  # Update or initialize git watcher
+  Update-GitWatcher -RepoPath $repoPath
   
   # Check if we should force an update of the git status
-  $currentTime = [int](Get-Date -UFormat '%s')
-  if (($currentTime - $script:lastGitCheck) -ge $script:gitEventThrottleSeconds) {
-    Update-GitStatus -GitRepoPath $repoDir
+  if (Test-GitStatusUpdateNeeded) {
+    Update-GitStatus -GitRepoPath $repoPath
   }
     
-  # Use cached data
+  # Use cached data if available, otherwise get fresh data
   if ($script:cachedGitInfo.Branch) {
-    if ($script:cachedGitInfo.Status) {
-      return "$global:flare_gitIcon $($script:cachedGitInfo.Branch) $($script:cachedGitInfo.Status)"
-    }
-    else {
-      return "$global:flare_gitIcon $($script:cachedGitInfo.Branch)"
-    }
+    return Format-GitOutput -Branch $script:cachedGitInfo.Branch -Status $script:cachedGitInfo.Status
   }
   else {
     # Fallback to direct calculation if cache not available
     $gitInfo = Get-GitBranchAndStatus
-    
-    if ($gitInfo.Branch) {
-      if ($gitInfo.Status) {
-        return "$global:flare_gitIcon $($gitInfo.Branch) $($gitInfo.Status)"
-      }
-      else {
-        return "$global:flare_gitIcon $($gitInfo.Branch)"
-      }
-    }
-    else {
-      return ""
-    }
+    return Format-GitOutput -Branch $gitInfo.Branch -Status $gitInfo.Status
   }
 }
