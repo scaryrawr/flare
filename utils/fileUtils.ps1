@@ -1,23 +1,38 @@
-function FindFileInParentDirectories {
+$global:flare_findFileInParentDirectories ??= {
   param (
-    [string]$fileName
+    [string]$FileName,
+    [string]$StartDirectory = $null
   )
 
   try {
-    $currentDir = Get-Location
-    $dir = $currentDir
+    $dir = if ($StartDirectory) {
+      $StartDirectory
+    }
+    else {
+      Get-Location
+    }
 
     while ($null -ne $dir) {
-      $filePath = Join-Path -Path $dir -ChildPath $fileName
+      $filePath = Join-Path -Path $dir -ChildPath $FileName
       if (Test-Path $filePath) {
         return $filePath
       }
       # Move up to the parent directory
       $dir = Split-Path -Path $dir -Parent
     }
-  } catch {
+  }
+  catch {
     return $null
   }
 
   return $null
+}
+
+function FindFileInParentDirectories {
+  param (
+    [string]$FileName,
+    [string]$StartDirectory = $null
+  )
+
+  return & $global:flare_findFileInParentDirectories -FileName $FileName -StartDirectory $StartDirectory
 }

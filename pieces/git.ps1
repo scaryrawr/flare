@@ -2,13 +2,10 @@
 
 # Script level variables to track git state
 $script:gitFileWatcher ??= $null
-$script:currentGitDir ??= $null
-$script:cachedGitInfo ??= @{ Branch = $null; Status = $null }
-$script:lastGitCheck ??= 0
-$script:gitEventThrottleSeconds ??= 1 # Throttle time between git status updates to prevent excessive operations
+$global:flare_currentGitDir ??= $null
+$global:flare_cachedGitInfo ??= @{ Branch = $null; Status = $null }
 
-# Updates the cached git status when files change in the repository
-function Update-GitStatus {
+$global:flare_gitStatusFunc ??= {
   param(
     [Parameter(Mandatory = $false)]
     [string]$GitRepoPath
@@ -16,14 +13,22 @@ function Update-GitStatus {
   
   # If we're not in a git repo, clear the cache
   if (-not $GitRepoPath) {
-    $script:cachedGitInfo = @{ Branch = $null; Status = $null }
+    $global:flare_cachedGitInfo = @{ Branch = $null; Status = $null }
     return
   }
   
   # Get fresh git status
-  $gitInfo = Get-GitBranchAndStatus
-  $script:cachedGitInfo = $gitInfo
-  $script:lastGitCheck = [int](Get-Date -UFormat '%s')
+  return Get-GitBranchAndStatus -GitRepoPath $GitRepoPath
+}
+
+# Updates the cached git status when files change in the repository
+function Update-GitStatus {
+  param(
+    [Parameter(Mandatory = $false)]
+    [string]$GitRepoPath
+  )
+
+  return & $global:flare_gitStatusFunc -GitRepoPath $GitRepoPath
 }
 
 function Format-GitStatus {
@@ -99,13 +104,18 @@ function Format-GitStatus {
 
 # Optimized function to get both branch and status in one call
 function Get-GitBranchAndStatus {
+  param(
+    [Parameter(Mandatory = $false)]
+    [string]$GitRepoPath
+  )
+
   # Check if git command is available
   if ($null -eq (Get-Command git -ErrorAction SilentlyContinue)) {
     return @{ Branch = $null; Status = $null }
   }
 
   # Find git directory using FindFileInParentDirectories (faster than git command)
-  $gitDir = FindFileInParentDirectories ".git"
+  $gitDir = $GitRepoPath ?? $(FindFileInParentDirectories ".git")
 
   # Not in a git repository
   if (-not $gitDir) {
@@ -178,7 +188,7 @@ function flare_init_git {
   
   # Get the parent directory of .git which is the actual repo directory
   $repoDir = Split-Path -Parent $gitDir
-  $script:currentGitDir = $repoDir
+  $global:flare_currentGitDir = $repoDir
   
   # Configure the FileSystemWatcher
   try {
@@ -203,11 +213,9 @@ function flare_init_git {
       
       # Register for change events
       $writeHandler = {
-        # Throttle updates to prevent excessive git operations
-        $currentTime = [int](Get-Date -UFormat '%s')
-        if (($currentTime - $script:lastGitCheck) -ge $script:gitEventThrottleSeconds) {
-          Update-GitStatus -GitRepoPath $script:currentGitDir
-        }
+        $path = $event.SourceEventArgs.FullPath
+        $gitDir = & $global:flare_findFileInParentDirectories -FileName ".git" -StartDirectory $path
+        $global:flare_cachedGitInfo = & $global:flare_gitStatusFunc -GitRepoPath $gitDir
       }
       
       # Register events - changes to files and directories will trigger the same handler
@@ -219,9 +227,6 @@ function flare_init_git {
       # Enable the watcher
       $script:gitFileWatcher.EnableRaisingEvents = $true
     }
-    
-    # Initialize cached git status
-    Update-GitStatus -GitRepoPath $repoDir
   }
   catch {
     Write-Error "Failed to initialize git FileSystemWatcher: $_"
@@ -239,12 +244,12 @@ function flare_cleanup_git {
     # Clean up any registered events
     Get-EventSubscriber | Where-Object { 
       $_.SourceObject -is [System.IO.FileSystemWatcher] -and 
-      $_.SourceObject.Path -eq $script:currentGitDir 
+      $_.SourceObject.Path -eq $global:flare_currentGitDir 
     } | Unregister-Event
   }
   
-  $script:currentGitDir = $null
-  $script:cachedGitInfo = @{ Branch = $null; Status = $null }
+  $global:flare_currentGitDir = $null
+  $global:flare_cachedGitInfo = @{ Branch = $null; Status = $null }
 }
 
 function Get-GitRepoPath {
@@ -266,12 +271,12 @@ function Update-GitWatcher {
   # Check if we need to initialize or update the watcher
   if (-not $script:gitFileWatcher) {
     # Initialize the watcher if it doesn't exist
-    $script:currentGitDir = $RepoPath
+    $global:flare_currentGitDir = $RepoPath
     flare_init_git
   }
   # Only update if we've changed directories
-  elseif ($script:currentGitDir -ne $RepoPath) {
-    $script:currentGitDir = $RepoPath
+  elseif ($global:flare_currentGitDir -ne $RepoPath) {
+    $global:flare_currentGitDir = $RepoPath
     flare_init_git  # This will reuse the existing watcher
   }
 }
@@ -300,7 +305,12 @@ function Format-GitOutput {
 }
 
 function Test-GitStatusUpdateNeeded {
-  return (-not $script:cachedGitInfo.Branch) -and (-not $script:cachedGitInfo.Status)
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$GitRepoPath
+  )
+  
+  return ($GitRepoPath -ne $global:flare_currentGitDir) -or ((-not $global:flare_cachedGitInfo.Branch) -and (-not $global:flare_cachedGitInfo.Status))
 }
 
 function flare_git {
@@ -315,21 +325,21 @@ function flare_git {
     return "" 
   }
   
+  # Check if we should force an update of the git status
+  if (Test-GitStatusUpdateNeeded $repoPath) {
+    $global:flare_cachedGitInfo = Update-GitStatus -GitRepoPath $repoPath
+  }
+
   # Update or initialize git watcher
   Update-GitWatcher -RepoPath $repoPath
-  
-  # Check if we should force an update of the git status
-  if (Test-GitStatusUpdateNeeded) {
-    Update-GitStatus -GitRepoPath $repoPath
-  }
     
   # Use cached data if available, otherwise get fresh data
-  if ($script:cachedGitInfo.Branch) {
-    return Format-GitOutput -Branch $script:cachedGitInfo.Branch -Status $script:cachedGitInfo.Status
+  if ($global:flare_cachedGitInfo.Branch) {
+    return Format-GitOutput -Branch $global:flare_cachedGitInfo.Branch -Status $global:flare_cachedGitInfo.Status
   }
   else {
     # Fallback to direct calculation if cache not available
-    $gitInfo = Get-GitBranchAndStatus
+    $gitInfo = Get-GitBranchAndStatus -GitRepoPath $repoPath
     return Format-GitOutput -Branch $gitInfo.Branch -Status $gitInfo.Status
   }
 }
