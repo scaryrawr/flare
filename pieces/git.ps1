@@ -285,7 +285,7 @@ function Format-GitOutput {
     [string]$Status
   )
   
-  $global:flare_gitIcon ??= ''
+  $global:flare_gitIcon ??= ''
   
   if (-not $Branch) {
     return ""
