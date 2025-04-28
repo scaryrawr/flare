@@ -24,11 +24,6 @@ function Test-IsWorkspace {
 }
 
 function flare_node {
-  # Check if node command is available
-  if ($null -eq (Get-Command node -ErrorAction SilentlyContinue)) {
-    return ""
-  }
-
   $packageJsonPath = FindFileInParentDirectories -fileName "package.json"
   $nvmrcPath = FindFileInParentDirectories -fileName ".nvmrc"
 
@@ -67,7 +62,13 @@ function flare_node {
     
     # Use cached version if available
     if ($null -eq $script:cachedNodeVersion) {
-      $script:cachedNodeVersion = node -v
+      # Check if the node command is available
+      if (Get-Command node -ErrorAction SilentlyContinue) {
+        $script:cachedNodeVersion = node -v
+      }
+      else {
+        $script:cachedNodeVersion = ""
+      }
     }
     return "󰎙 $script:cachedNodeVersion"
   }

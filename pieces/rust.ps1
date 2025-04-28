@@ -6,11 +6,6 @@ $script:lastToolchainTimestamp ??= $null
 $script:rustWorkspaceRootPath ??= $null
 
 function flare_rust {
-  # Check if rustc command is available
-  if ($null -eq (Get-Command rustc -ErrorAction SilentlyContinue)) {
-    return ""
-  }
-
   $cargoTomlPath = FindFileInParentDirectories -fileName "Cargo.toml"
   $toolchainPath = FindFileInParentDirectories -fileName "rust-toolchain.toml"
   
@@ -26,7 +21,13 @@ function flare_rust {
   if ($null -ne $cargoTomlPath) {    
     # Use cached version if available
     if ($null -eq $script:cachedRustVersion) {
-      $script:cachedRustVersion = rustc --version | Select-String -Pattern "(\d+\.\d+\.\d+)" | ForEach-Object { $_.Matches.Groups[1].Value }
+      # Check if the rustc command is available
+      if (Get-Command rustc -ErrorAction SilentlyContinue) {
+        $script:cachedRustVersion = rustc --version | Select-String -Pattern "(\d+\.\d+\.\d+)" | ForEach-Object { $_.Matches.Groups[1].Value }
+      }
+      else {
+        $script:cachedRustVersion = ""
+      }
     }
 
     $script:rustWorkspaceRootPath = Split-Path -Path $cargoTomlPath -Parent

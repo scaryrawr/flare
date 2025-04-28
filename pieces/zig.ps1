@@ -7,11 +7,6 @@ $script:lastBuildZigTimestamp ??= $null
 $script:lastZigProjectPath ??= $null
 
 function flare_zig {
-  # Check if zig command is available
-  if ($null -eq (Get-Command zig -ErrorAction SilentlyContinue)) {
-    return ""
-  }
-
   $buildZigPath = FindFileInParentDirectories -fileName "build.zig"
   $buildZigZonPath = FindFileInParentDirectories -fileName "build.zig.zon"
   
@@ -35,9 +30,16 @@ function flare_zig {
 
   if ($null -ne $buildZigPath) {
     # Use cached version if available
-    if ($null -eq $script:cachedZigVersion) {
-      $script:cachedZigVersion = zig version
+    if (($null -eq $script:cachedZigVersion)) {
+      # Check if the zig command is available
+      if (Get-Command zig -ErrorAction SilentlyContinue) {
+        $script:cachedZigVersion = zig version
+      }
+      else {
+        $script:cachedZigVersion = ""
+      }
     }
+
     return " $script:cachedZigVersion"
   }
   else {
