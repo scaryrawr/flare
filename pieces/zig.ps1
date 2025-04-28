@@ -7,54 +7,39 @@ $script:lastBuildZigTimestamp ??= $null
 $script:lastZigProjectPath ??= $null
 
 function flare_zig {
-  # Check if zig command is available
-  if ($null -eq (Get-Command zig -ErrorAction SilentlyContinue)) {
-    return ""
-  }
-
   $buildZigPath = FindFileInParentDirectories -fileName "build.zig"
   $buildZigZonPath = FindFileInParentDirectories -fileName "build.zig.zon"
   
   # Get the current project directory based on build.zig location
   $currentProjectPath = if ($null -ne $buildZigPath) { Split-Path -Parent $buildZigPath } else { $null }
   
-  # Check if we've changed projects or if build files have changed
-  $shouldInvalidateCache = $false
-  
   # Invalidate cache when switching between projects
   if ($script:lastZigProjectPath -ne $currentProjectPath) {
-    $shouldInvalidateCache = $true
+    $script:cachedZigVersion = $null
     $script:lastZigProjectPath = $currentProjectPath
   }
   
-  # Check build.zig.zon changes
+  # Check build.zig.zon changes and invalidate cache if needed
   if ($null -ne $buildZigZonPath) {
     $currentTimestamp = (Get-Item $buildZigZonPath).LastWriteTime
     if ($script:lastBuildZigZonTimestamp -ne $currentTimestamp) {
-      $shouldInvalidateCache = $true
+      $script:cachedZigVersion = $null
       $script:lastBuildZigZonTimestamp = $currentTimestamp
     }
-  }
-  
-  # Check build.zig changes
-  if ($null -ne $buildZigPath) {
-    $currentTimestamp = (Get-Item $buildZigPath).LastWriteTime
-    if ($script:lastBuildZigTimestamp -ne $currentTimestamp) {
-      $shouldInvalidateCache = $true
-      $script:lastBuildZigTimestamp = $currentTimestamp
-    }
-  }
-  
-  # Invalidate cache if needed
-  if ($shouldInvalidateCache) {
-    $script:cachedZigVersion = $null
   }
 
   if ($null -ne $buildZigPath) {
     # Use cached version if available
-    if ($null -eq $script:cachedZigVersion) {
-      $script:cachedZigVersion = zig version
+    if (($null -eq $script:cachedZigVersion)) {
+      # Check if the zig command is available
+      if (Get-Command zig -ErrorAction SilentlyContinue) {
+        $script:cachedZigVersion = zig version
+      }
+      else {
+        $script:cachedZigVersion = ""
+      }
     }
+
     return " $script:cachedZigVersion"
   }
   else {

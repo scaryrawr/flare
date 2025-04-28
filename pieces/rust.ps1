@@ -5,28 +5,7 @@ $script:cachedRustVersion ??= $null
 $script:lastToolchainTimestamp ??= $null
 $script:rustWorkspaceRootPath ??= $null
 
-# Helper function to check if a Cargo.toml contains workspace definitions
-function Test-IsRustWorkspace {
-  param (
-    [string]$CargoTomlPath
-  )
-    
-  try {
-    $content = Get-Content -Path $CargoTomlPath -Raw
-    # Check for [workspace] section in Cargo.toml
-    return $content -match '\[\s*workspace\s*\]'
-  }
-  catch {
-    return $false
-  }
-}
-
 function flare_rust {
-  # Check if rustc command is available
-  if ($null -eq (Get-Command rustc -ErrorAction SilentlyContinue)) {
-    return ""
-  }
-
   $cargoTomlPath = FindFileInParentDirectories -fileName "Cargo.toml"
   $toolchainPath = FindFileInParentDirectories -fileName "rust-toolchain.toml"
   
@@ -39,34 +18,19 @@ function flare_rust {
     }
   }
 
-  if ($null -ne $cargoTomlPath) {
-    # Check if we need to determine or update the workspace root
-    if ($null -eq $script:rustWorkspaceRootPath -or -not (Test-Path $script:rustWorkspaceRootPath)) {
-      # Check if this is a workspace root
-      if (Test-IsRustWorkspace -CargoTomlPath $cargoTomlPath) {
-        $script:rustWorkspaceRootPath = (Split-Path -Parent $cargoTomlPath)
-      }
-      else {
-        # Check if we're in a subdirectory of a workspace
-        $dir = (Split-Path -Parent $cargoTomlPath)
-        while ($dir) {
-          $potentialRoot = Join-Path $dir "Cargo.toml"
-          if (Test-Path $potentialRoot -PathType Leaf) {
-            if (Test-IsRustWorkspace -CargoTomlPath $potentialRoot) {
-              $script:rustWorkspaceRootPath = $dir
-              break
-            }
-          }
-          $dir = Split-Path -Parent $dir
-          if ($null -eq $dir -or $dir -eq "") { break }
-        }
-      }
-    }
-    
+  if ($null -ne $cargoTomlPath) {    
     # Use cached version if available
     if ($null -eq $script:cachedRustVersion) {
-      $script:cachedRustVersion = rustc --version | Select-String -Pattern "(\d+\.\d+\.\d+)" | ForEach-Object { $_.Matches.Groups[1].Value }
+      # Check if the rustc command is available
+      if (Get-Command rustc -ErrorAction SilentlyContinue) {
+        $script:cachedRustVersion = rustc --version | Select-String -Pattern "(\d+\.\d+\.\d+)" | ForEach-Object { $_.Matches.Groups[1].Value }
+      }
+      else {
+        $script:cachedRustVersion = ""
+      }
     }
+
+    $script:rustWorkspaceRootPath = Split-Path -Path $cargoTomlPath -Parent
     return "󱘗 $script:cachedRustVersion"
   }
   else {
