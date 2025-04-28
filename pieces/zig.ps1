@@ -18,36 +18,19 @@ function flare_zig {
   # Get the current project directory based on build.zig location
   $currentProjectPath = if ($null -ne $buildZigPath) { Split-Path -Parent $buildZigPath } else { $null }
   
-  # Check if we've changed projects or if build files have changed
-  $shouldInvalidateCache = $false
-  
   # Invalidate cache when switching between projects
   if ($script:lastZigProjectPath -ne $currentProjectPath) {
-    $shouldInvalidateCache = $true
+    $script:cachedZigVersion = $null
     $script:lastZigProjectPath = $currentProjectPath
   }
   
-  # Check build.zig.zon changes
+  # Check build.zig.zon changes and invalidate cache if needed
   if ($null -ne $buildZigZonPath) {
     $currentTimestamp = (Get-Item $buildZigZonPath).LastWriteTime
     if ($script:lastBuildZigZonTimestamp -ne $currentTimestamp) {
-      $shouldInvalidateCache = $true
+      $script:cachedZigVersion = $null
       $script:lastBuildZigZonTimestamp = $currentTimestamp
     }
-  }
-  
-  # Check build.zig changes
-  if ($null -ne $buildZigPath) {
-    $currentTimestamp = (Get-Item $buildZigPath).LastWriteTime
-    if ($script:lastBuildZigTimestamp -ne $currentTimestamp) {
-      $shouldInvalidateCache = $true
-      $script:lastBuildZigTimestamp = $currentTimestamp
-    }
-  }
-  
-  # Invalidate cache if needed
-  if ($shouldInvalidateCache) {
-    $script:cachedZigVersion = $null
   }
 
   if ($null -ne $buildZigPath) {
