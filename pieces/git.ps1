@@ -4,6 +4,7 @@
 $script:gitFileWatcher ??= $null
 $global:flare_currentGitDir ??= $null
 $global:flare_cachedGitInfo ??= @{ Branch = $null; Status = $null }
+$global:flare_gitUpdateInProgress ??= $false
 
 $global:flare_gitStatusFunc ??= {
   param(
@@ -213,9 +214,19 @@ function flare_init_git {
       
       # Register for change events
       $writeHandler = {
-        $path = $event.SourceEventArgs.FullPath
-        $gitDir = & $global:flare_findFileInParentDirectories -FileName ".git" -StartDirectory $path
-        $global:flare_cachedGitInfo = & $global:flare_gitStatusFunc -GitRepoPath $gitDir
+        if ($global:flare_gitUpdateInProgress) {
+          return
+        }
+        
+        try {
+          $global:flare_gitUpdateInProgress = $true
+          $path = $event.SourceEventArgs.FullPath
+          $gitDir = & $global:flare_findFileInParentDirectories -FileName ".git" -StartDirectory $path
+          $global:flare_cachedGitInfo = & $global:flare_gitStatusFunc -GitRepoPath $gitDir
+        }
+        finally {
+          $global:flare_gitUpdateInProgress = $false
+        }
       }
       
       # Register events - changes to files and directories will trigger the same handler
@@ -249,6 +260,7 @@ function flare_cleanup_git {
   }
   
   $global:flare_currentGitDir = $null
+  $global:flare_gitUpdateInProgress = $false
   $global:flare_cachedGitInfo = @{ Branch = $null; Status = $null }
 }
 
