@@ -109,16 +109,16 @@ function Get-GitBranchAndStatus {
     [string]$GitRepoPath
   )
 
-  # Check if git command is available
-  if ($null -eq (Get-Command git -ErrorAction SilentlyContinue)) {
-    return @{ Branch = $null; Status = $null }
-  }
-
   # Find git directory using FindFileInParentDirectories (faster than git command)
   $gitDir = $GitRepoPath ?? $(FindFileInParentDirectories ".git")
 
   # Not in a git repository
   if (-not $gitDir) {
+    return @{ Branch = $null; Status = $null }
+  }
+
+  # Check if git command is available
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     return @{ Branch = $null; Status = $null }
   }
 
