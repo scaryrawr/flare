@@ -66,15 +66,38 @@ $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
     }
 }
 
+function Invoke-FlarePiece {
+    param(
+        [string]$PieceName
+    )
+    try {
+        $command = "flare_$PieceName"
+        $result = $null
+        $timing = $null
+        $timing = [System.Diagnostics.Stopwatch]::StartNew()
+        $result = & $command -ErrorAction SilentlyContinue
+        $timing.Stop()
+        if ($global:flare_includeTime) {
+            if ($result -ne '') {
+                $elapsed = [math]::Round($timing.Elapsed.TotalMilliseconds, 2)
+                return "$result ($elapsed ms)"
+            }
+            else {
+                return ''
+            }
+        }
+        else {
+            return $result
+        }
+    }
+    catch {
+        return ''
+    }
+}
+
 function Get-LeftPrompt {
     $leftPieces = $flare_leftPieces | ForEach-Object {
-        try {
-            $command = "flare_$_"
-            & $command -ErrorAction SilentlyContinue
-        }
-        catch {
-            return ""
-        }
+        Invoke-FlarePiece $_
     } | Where-Object { $_ }
     
     $left = "${flare_topPrefix}"
@@ -97,16 +120,10 @@ function Get-LeftPrompt {
 
 function Get-RightPrompt {
     $rightPieces = $flare_rightPieces | ForEach-Object {
-        try {
-            $command = "flare_$_"
-            & $command -ErrorAction SilentlyContinue
-        }
-        catch {
-            return ""
-        }
+        Invoke-FlarePiece $_
     } | Where-Object { $_ }
     
-    $right = ""
+    $right = ''
     $count = 1
     foreach ($piece in $rightPieces) {
         $background = $backgroundStyles.Values[($backgroundStyles.Count - $count) % $backgroundStyles.Count]
@@ -147,7 +164,7 @@ function Prompt {
 Export-ModuleMember -Function @('Prompt')
 
 # Use Set-PSReadLineKeyHandler to clear the prompt and rewrite the user's input when the user submits a command
-Set-PSReadLineKeyHandler -Key Enter -BriefDescription "Clear prompt and rewrite input on Enter" -ScriptBlock {
+Set-PSReadLineKeyHandler -Key Enter -BriefDescription 'Clear prompt and rewrite input on Enter' -ScriptBlock {
     # Prepare references for the input line and cursor position
     $inputLineRef = [ref]''
     $cursorPositionRef = [ref]0
@@ -170,7 +187,7 @@ Set-PSReadLineKeyHandler -Key Enter -BriefDescription "Clear prompt and rewrite 
     $consoleWidth = [System.Console]::BufferWidth
 
     # Clear the current line and the next line by overwriting with spaces
-    [System.Console]::Write(" " * $consoleWidth * 2)
+    [System.Console]::Write(' ' * $consoleWidth * 2)
     
     # Rewrite the user's input prefixed with '>'
     [System.Console]::SetCursorPosition(0, [System.Console]::CursorTop - 1)
