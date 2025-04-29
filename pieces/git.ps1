@@ -1,7 +1,7 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
 # Script level variables to track git state
-$script:gitFileWatcher ??= $null
+$global:flare_gitFileWatcher ??= $null
 $global:flare_currentGitDir ??= $null
 $global:flare_cachedGitInfo ??= @{ Branch = $null; Status = $null }
 
@@ -52,52 +52,52 @@ function Format-GitStatus {
   $behind = 0
   
   $StatusOutput | ForEach-Object {
-    if ($_ -match "^\s*([AMDRCU?]+)\s+(.*)") {
+    if ($_ -match '^\s*([AMDRCU?]+)\s+(.*)') {
       # $file = $Matches[2]
       $status = $Matches[1]
       
       # Handle unmerged files (conflicts) with priority
-      if ($status -match "U" -or $status -match "U{2,}|A{2,}|D{2,}") {
+      if ($status -match 'U' -or $status -match 'U{2,}|A{2,}|D{2,}') {
         $unmerged += 1
       }
       # Handle other standard statuses
       else {
         switch ($status) {
-          "A" { $added += 1 }
-          "M" { $modified += 1 }
-          "D" { $deleted += 1 }
-          "R" { $renamed += 1 }
-          "C" { $copied += 1 }
-          "??" { $untracked += 1 }
+          'A' { $added += 1 }
+          'M' { $modified += 1 }
+          'D' { $deleted += 1 }
+          'R' { $renamed += 1 }
+          'C' { $copied += 1 }
+          '??' { $untracked += 1 }
         }
       }
     }
-    elseif ($_ -match "(ahead|behind) (\d+)") {
+    elseif ($_ -match '(ahead|behind) (\d+)') {
       $status = $Matches[1]
       $count = $Matches[2]
       switch ($status) {
-        "ahead" { $ahead += [int]$count }
-        "behind" { $behind += [int]$count }
+        'ahead' { $ahead += [int]$count }
+        'behind' { $behind += [int]$count }
       }
     }
   }
  
-  $script:statusBuilder = ""
+  $script:statusBuilder = ''
   function Add-Status($icon, $count) {
     if ($count -eq 0) { return }
-    if ($script:statusBuilder) { $script:statusBuilder += " " }
+    if ($script:statusBuilder) { $script:statusBuilder += ' ' }
     $script:statusBuilder += "$icon$count"
   }
 
-  Add-Status "" $ahead
-  Add-Status "" $behind
-  Add-Status "" $added
-  Add-Status "" $modified
-  Add-Status "󰆴" $deleted
-  Add-Status "󰑕" $renamed
-  Add-Status "" $copied
-  Add-Status "" $unmerged
-  Add-Status "" $untracked
+  Add-Status '' $ahead
+  Add-Status '' $behind
+  Add-Status '' $added
+  Add-Status '' $modified
+  Add-Status '󰆴' $deleted
+  Add-Status '󰑕' $renamed
+  Add-Status '' $copied
+  Add-Status '' $unmerged
+  Add-Status '' $untracked
 
   return $script:statusBuilder
 }
@@ -110,7 +110,7 @@ function Get-GitBranchAndStatus {
   )
 
   # Find git directory using FindFileInParentDirectories (faster than git command)
-  $gitDir = $GitRepoPath ?? $(FindFileInParentDirectories ".git")
+  $gitDir = $GitRepoPath ?? $(FindFileInParentDirectories '.git')
 
   # Not in a git repository
   if (-not $gitDir) {
@@ -126,16 +126,16 @@ function Get-GitBranchAndStatus {
   $branch = $null
   
   # Check if we're on a branch or in a detached HEAD state
-  $headFile = Join-Path -Path $gitDir -ChildPath "HEAD"
+  $headFile = Join-Path -Path $gitDir -ChildPath 'HEAD'
   if (Test-Path $headFile) {
     $headContent = Get-Content -Path $headFile -Raw
     
     # Check if we have a direct reference to a branch
-    if ($headContent -match "ref: refs/heads/(.+)$") {
+    if ($headContent -match 'ref: refs/heads/(.+)$') {
       $branch = $Matches[1]
     }
     # If not a symbolic ref (detached HEAD), use abbreviated commit hash
-    elseif ($headContent -match "^([0-9a-f]+)") {
+    elseif ($headContent -match '^([0-9a-f]+)') {
       $commitHash = $Matches[1].Substring(0, 7)  # Use first 7 chars
       $branch = "detached@$commitHash"
     }
@@ -181,7 +181,7 @@ function Get-GitBranchAndStatus {
 }
 
 function flare_init_git {
-  $gitDir = FindFileInParentDirectories ".git"
+  $gitDir = FindFileInParentDirectories '.git'
   if (-not $gitDir) {
     return
   }
@@ -193,53 +193,59 @@ function flare_init_git {
   # Configure the FileSystemWatcher
   try {
     # Reuse existing watcher if possible
-    if ($script:gitFileWatcher) {
+    if ($global:flare_gitFileWatcher) {
       # Just update the path of the existing watcher
-      $script:gitFileWatcher.EnableRaisingEvents = $false
-      $script:gitFileWatcher.Path = $repoDir
-      $script:gitFileWatcher.EnableRaisingEvents = $true
+      $global:flare_gitFileWatcher.EnableRaisingEvents = $false
+      $global:flare_gitFileWatcher.Path = $repoDir
+      $global:flare_gitFileWatcher.EnableRaisingEvents = $true
     }
     else {
       # Create new watcher only if one doesn't exist
-      $script:gitFileWatcher = New-Object System.IO.FileSystemWatcher
-      $script:gitFileWatcher.Path = $repoDir
-      $script:gitFileWatcher.IncludeSubdirectories = $true
+      $global:flare_gitFileWatcher = New-Object System.IO.FileSystemWatcher
+      $global:flare_gitFileWatcher.Path = $repoDir
+      $global:flare_gitFileWatcher.IncludeSubdirectories = $true
       
       # Watch for any changes that might affect git status
-      $script:gitFileWatcher.NotifyFilter = [System.IO.NotifyFilters]::FileName -bor 
+      $global:flare_gitFileWatcher.NotifyFilter = [System.IO.NotifyFilters]::FileName -bor 
       [System.IO.NotifyFilters]::DirectoryName -bor
       [System.IO.NotifyFilters]::LastWrite -bor
       [System.IO.NotifyFilters]::CreationTime
       
       # Register for change events
       $writeHandler = {
-        $path = $event.SourceEventArgs.FullPath
-        $gitDir = & $global:flare_findFileInParentDirectories -FileName ".git" -StartDirectory $path
-        $global:flare_cachedGitInfo = & $global:flare_gitStatusFunc -GitRepoPath $gitDir
+        try {
+          $global:flare_gitFileWatcher.EnableRaisingEvents = $false
+          $path = $event.SourceEventArgs.FullPath
+          $gitDir = & $global:flare_findFileInParentDirectories -FileName '.git' -StartDirectory $path
+          $global:flare_cachedGitInfo = & $global:flare_gitStatusFunc -GitRepoPath $gitDir
+        }
+        finally {
+          $global:flare_gitFileWatcher.EnableRaisingEvents = $true
+        }
       }
       
       # Register events - changes to files and directories will trigger the same handler
-      $null = Register-ObjectEvent -InputObject $script:gitFileWatcher -EventName Created -Action $writeHandler
-      $null = Register-ObjectEvent -InputObject $script:gitFileWatcher -EventName Changed -Action $writeHandler
-      $null = Register-ObjectEvent -InputObject $script:gitFileWatcher -EventName Deleted -Action $writeHandler
-      $null = Register-ObjectEvent -InputObject $script:gitFileWatcher -EventName Renamed -Action $writeHandler
+      $null = Register-ObjectEvent -InputObject $global:flare_gitFileWatcher -EventName Created -Action $writeHandler
+      $null = Register-ObjectEvent -InputObject $global:flare_gitFileWatcher -EventName Changed -Action $writeHandler
+      $null = Register-ObjectEvent -InputObject $global:flare_gitFileWatcher -EventName Deleted -Action $writeHandler
+      $null = Register-ObjectEvent -InputObject $global:flare_gitFileWatcher -EventName Renamed -Action $writeHandler
       
       # Enable the watcher
-      $script:gitFileWatcher.EnableRaisingEvents = $true
+      $global:flare_gitFileWatcher.EnableRaisingEvents = $true
     }
   }
   catch {
     Write-Error "Failed to initialize git FileSystemWatcher: $_"
-    $script:gitFileWatcher = $null
+    $global:flare_gitFileWatcher = $null
   }
 }
 
 function flare_cleanup_git {
   # Clean up the FileSystemWatcher and its event handlers
-  if ($script:gitFileWatcher) {
-    $script:gitFileWatcher.EnableRaisingEvents = $false
-    $script:gitFileWatcher.Dispose()
-    $script:gitFileWatcher = $null
+  if ($global:flare_gitFileWatcher) {
+    $global:flare_gitFileWatcher.EnableRaisingEvents = $false
+    $global:flare_gitFileWatcher.Dispose()
+    $global:flare_gitFileWatcher = $null
     
     # Clean up any registered events
     Get-EventSubscriber | Where-Object { 
@@ -254,7 +260,7 @@ function flare_cleanup_git {
 
 function Get-GitRepoPath {
   # Find git directory using FindFileInParentDirectories (faster than git command)
-  $gitDir = FindFileInParentDirectories ".git"
+  $gitDir = FindFileInParentDirectories '.git'
   if (-not $gitDir) { 
     return $null
   }
@@ -269,7 +275,7 @@ function Update-GitWatcher {
   )
   
   # Check if we need to initialize or update the watcher
-  if (-not $script:gitFileWatcher) {
+  if (-not $global:flare_gitFileWatcher) {
     # Initialize the watcher if it doesn't exist
     $global:flare_currentGitDir = $RepoPath
     flare_init_git
@@ -293,7 +299,7 @@ function Format-GitOutput {
   $global:flare_gitIcon ??= ''
   
   if (-not $Branch) {
-    return ""
+    return ''
   }
   
   if ($Status) {
@@ -319,10 +325,10 @@ function flare_git {
   
   # Not in a git repo, clean up if needed
   if (-not $repoPath) { 
-    if ($script:gitFileWatcher) {
+    if ($global:flare_gitFileWatcher) {
       flare_cleanup_git
     }
-    return "" 
+    return '' 
   }
   
   # Check if we should force an update of the git status
