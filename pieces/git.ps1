@@ -217,11 +217,6 @@ function flare_init_git {
           return  # Skip if a job is already running
         }
 
-        if ($null -ne $global:flare_gitStatusJob) {
-          $results = Receive-Job -Job $job
-          Write-Host $results
-        }
-
         $global:flare_gitStatusJob = Start-ThreadJob -ArgumentList $eventArgs, $global:flare_cachedGitInfo -ScriptBlock {
           param($evt, $gitInfoCache)
           $path = $evt.FullPath
@@ -237,7 +232,6 @@ function flare_init_git {
               try {
                 $p = Get-Process -Id $proc.ProcessId -ErrorAction SilentlyContinue
                 if ($p) {
-                  Write-Output "Waiting for git process $($p.Id) to exit..."
                   $p.WaitForExit()
                 }
               }
@@ -253,7 +247,6 @@ function flare_init_git {
             foreach ($proc in $gitProcs) {
               try {
                 # Wait for the process to exit
-                Write-Output "Waiting for git process $($proc.PID) to exit..."
                 while (Get-Process -Id $proc.PID -ErrorAction SilentlyContinue) {
                   Start-Sleep -Milliseconds 100
                 }
