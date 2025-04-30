@@ -214,6 +214,37 @@ function flare_init_git {
       
       # Register for change events, events are fired (sequentially)
       $writeHandler = {
+        # Get the full path from event args
+        $path = $eventArgs.FullPath
+
+        # Try to find .gitignore file
+        $repoPath = $global:flare_currentGitDir
+        $gitignorePath = Join-Path -Path $repoPath -ChildPath ".gitignore"
+
+        if (Test-Path $gitignorePath) {
+          # Read gitignore patterns
+          $gitignorePatterns = Get-Content -Path $gitignorePath
+
+          # Convert the patterns to regex for matching
+          $regexPatterns = $gitignorePatterns | Where-Object { 
+            $_ -and -not $_.StartsWith('#') -and $_.Trim() 
+          } | ForEach-Object {
+            $pattern = $_.Trim()
+            $pattern = $pattern -replace '\.', '\.'
+            $pattern = $pattern -replace '\*', '.*'
+            $pattern = $pattern -replace '\?', '.'
+            "^$pattern$|^$pattern\\.*|.*\\$pattern$|.*\\$pattern\\.*"
+          }
+
+          # Check if path matches any gitignore pattern
+          $relativePath = $path.Substring($repoPath.Length).TrimStart('\', '/')
+          foreach ($regex in $regexPatterns) {
+            if ($relativePath -match $regex) {
+              return
+            }
+          }
+        }
+
         if (($null -ne $global:flare_gitStatusJob) -and $global:flare_gitStatusJob.State -eq 'Running') {
           return  # Skip if a job is already running
         }
