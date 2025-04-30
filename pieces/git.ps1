@@ -391,7 +391,7 @@ function flare_git {
 
   # Update or initialize git watcher
   Update-GitWatcher -RepoPath $repoPath
-    
+
   # Use cached data if available, otherwise get fresh data
   if ($global:flare_cachedGitInfo.Branch) {
     return Format-GitOutput -Branch $global:flare_cachedGitInfo.Branch -Status $global:flare_cachedGitInfo.Status
