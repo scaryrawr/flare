@@ -1,10 +1,10 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
-# Script level variables to track git state
+# global level variables to track git state
 $global:flare_gitFileWatcher ??= $null
 $global:flare_currentGitDir ??= $null
 $global:flare_cachedGitInfo ??= @{ Branch = $null; Status = $null }
-$global:flare_gitMutex ??= New-Object System.Threading.Mutex($false)
+$global:flare_gitStatusJob ??= $null
 
 $global:flare_gitStatusFunc ??= {
   param(
@@ -12,10 +12,9 @@ $global:flare_gitStatusFunc ??= {
     [string]$GitRepoPath
   )
   
-  # If we're not in a git repo, clear the cache
+  # If we're not in a git repo, return empty
   if (-not $GitRepoPath) {
-    $global:flare_cachedGitInfo = @{ Branch = $null; Status = $null }
-    return
+    return @{ Branch = $null; Status = $null }
   }
   
   # Get fresh git status
@@ -212,20 +211,19 @@ function flare_init_git {
       [System.IO.NotifyFilters]::LastWrite -bor
       [System.IO.NotifyFilters]::CreationTime
       
-      # Register for change events
+      # Register for change events, events are fired (sequentially)
       $writeHandler = {
-        $canUpdate = $global:flare_gitMutex.WaitOne(0)
-        if (-not $canUpdate) {
-          return
+        if (($null -ne $global:flare_gitStatusJob) -and $global:flare_gitStatusJob.State -eq 'Running') {
+          return  # Skip if a job is already running
         }
 
-        try {
-          $path = $event.SourceEventArgs.FullPath
+        $global:flare_gitStatusJob = Start-ThreadJob -ArgumentList $eventArgs, $global:flare_cachedGitInfo -ScriptBlock {
+          param($evt, $gitInfoCache)
+          $path = $evt.FullPath
           $gitDir = & $global:flare_findFileInParentDirectories -FileName '.git' -StartDirectory $path
-          $global:flare_cachedGitInfo = & $global:flare_gitStatusFunc -GitRepoPath $gitDir
-        }
-        finally {
-          $global:flare_gitMutex.ReleaseMutex()
+          $freshGitInfo = & $global:flare_gitStatusFunc -GitRepoPath $gitDir
+          $gitInfoCache.Branch = $freshGitInfo.Branch
+          $gitInfoCache.Status = $freshGitInfo.Status
         }
       }
       
