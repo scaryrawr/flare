@@ -217,10 +217,51 @@ function flare_init_git {
           return  # Skip if a job is already running
         }
 
+        if ($null -ne $global:flare_gitStatusJob) {
+          $results = Receive-Job -Job $job
+          Write-Host $results
+        }
+
         $global:flare_gitStatusJob = Start-ThreadJob -ArgumentList $eventArgs, $global:flare_cachedGitInfo -ScriptBlock {
           param($evt, $gitInfoCache)
           $path = $evt.FullPath
           $gitDir = & $global:flare_findFileInParentDirectories -FileName '.git' -StartDirectory $path
+
+          # Wait for any child git processes of this PowerShell instance to finish before continuing (cross-platform)
+          $pwshPid = $PID
+          if ($IsWindows) {
+            $gitProcs = Get-CimInstance Win32_Process | Where-Object {
+              $_.Name -match '^git(\.exe)?$' -and $_.ParentProcessId -eq $pwshPid
+            }
+            foreach ($proc in $gitProcs) {
+              try {
+                $p = Get-Process -Id $proc.ProcessId -ErrorAction SilentlyContinue
+                if ($p) {
+                  Write-Output "Waiting for git process $($p.Id) to exit..."
+                  $p.WaitForExit()
+                }
+              }
+              catch {}
+            }
+          }
+          else {
+            # On Unix-like systems, use ps to find child git processes
+            $gitProcs = ps -o pid=, ppid=, comm= | Select-String 'git$' | ForEach-Object {
+              $fields = ($_ -replace '^\s+|\s+$', '') -split '\s+'
+              [PSCustomObject]@{ PID = $fields[0]; PPID = $fields[1]; CMD = $fields[2] }
+            } | Where-Object { $_.PPID -eq $pwshPid }
+            foreach ($proc in $gitProcs) {
+              try {
+                # Wait for the process to exit
+                Write-Output "Waiting for git process $($proc.PID) to exit..."
+                while (Get-Process -Id $proc.PID -ErrorAction SilentlyContinue) {
+                  Start-Sleep -Milliseconds 100
+                }
+              }
+              catch {}
+            }
+          }
+
           $freshGitInfo = & $global:flare_gitStatusFunc -GitRepoPath $gitDir
           $gitInfoCache.Branch = $freshGitInfo.Branch
           $gitInfoCache.Status = $freshGitInfo.Status
