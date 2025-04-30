@@ -4,6 +4,7 @@
 $global:flare_gitFileWatcher ??= $null
 $global:flare_currentGitDir ??= $null
 $global:flare_cachedGitInfo ??= @{ Branch = $null; Status = $null }
+$global:flare_gitMutex ??= New-Object System.Threading.Mutex($false)
 
 $global:flare_gitStatusFunc ??= {
   param(
@@ -213,14 +214,18 @@ function flare_init_git {
       
       # Register for change events
       $writeHandler = {
+        $canUpdate = $global:flare_gitMutex.WaitOne(0)
+        if (-not $canUpdate) {
+          return
+        }
+
         try {
-          $global:flare_gitFileWatcher.EnableRaisingEvents = $false
           $path = $event.SourceEventArgs.FullPath
           $gitDir = & $global:flare_findFileInParentDirectories -FileName '.git' -StartDirectory $path
           $global:flare_cachedGitInfo = & $global:flare_gitStatusFunc -GitRepoPath $gitDir
         }
         finally {
-          $global:flare_gitFileWatcher.EnableRaisingEvents = $true
+          $global:flare_gitMutex.ReleaseMutex()
         }
       }
       
