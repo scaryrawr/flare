@@ -240,10 +240,26 @@ function flare_init_git {
           }
           else {
             # On Unix-like systems, use ps to find child git processes
-            $gitProcs = ps -o pid=, ppid=, comm= | Select-String 'git$' | ForEach-Object {
+            # On Unix-like systems, use ps to find child git processes
+            $gitProcs = if ($IsMacOS) {
+              # macOS BSD-style ps
+              ps -o pid=, ppid=, comm= | Where-Object { $_ -match 'git$' }
+            }
+            else {
+              # Linux GNU-style ps
+              ps -o pid=, ppid=, comm= | Where-Object { $_ -match 'git$' }
+            }
+
+            # Process the output in a cross-platform way
+            $gitProcs = $gitProcs | ForEach-Object {
               $fields = ($_ -replace '^\s+|\s+$', '') -split '\s+'
-              [PSCustomObject]@{ PID = $fields[0]; PPID = $fields[1]; CMD = $fields[2] }
+              [PSCustomObject]@{ 
+                PID  = [int]$fields[0]
+                PPID = [int]$fields[1]
+                CMD  = $fields[2] 
+              }
             } | Where-Object { $_.PPID -eq $pwshPid }
+
             foreach ($proc in $gitProcs) {
               try {
                 # Wait for the process to exit
