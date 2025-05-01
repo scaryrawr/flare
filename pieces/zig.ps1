@@ -40,7 +40,7 @@ function flare_zig {
       }
     }
 
-    return " $script:cachedZigVersion"
+    return "$script:cachedZigVersion"
   }
   else {
     # Reset cache when not in a Zig project

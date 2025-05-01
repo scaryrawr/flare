@@ -31,7 +31,7 @@ function flare_rust {
     }
 
     $script:rustWorkspaceRootPath = Split-Path -Path $cargoTomlPath -Parent
-    return "󱘗 $script:cachedRustVersion"
+    return "$script:cachedRustVersion"
   }
   else {
     # Check if we're still within the previously identified workspace
@@ -40,7 +40,7 @@ function flare_rust {
       # If we're still within the workspace, don't invalidate the cache
       if ($currentPath.StartsWith($script:rustWorkspaceRootPath)) {
         if ($null -ne $script:cachedRustVersion) {
-          return "󱘗 $script:cachedRustVersion"
+          return "$script:cachedRustVersion"
         }
       }
     }

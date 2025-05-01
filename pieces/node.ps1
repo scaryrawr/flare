@@ -70,7 +70,7 @@ function flare_node {
         $script:cachedNodeVersion = ""
       }
     }
-    return "󰎙 $script:cachedNodeVersion"
+    return "$script:cachedNodeVersion"
   }
   else {
     # Check if we're still within the previously identified workspace
@@ -79,7 +79,7 @@ function flare_node {
       # If we're still within the workspace, don't invalidate the cache
       if ($currentPath.StartsWith($script:workspaceRootPath)) {
         if ($null -ne $script:cachedNodeVersion) {
-          return "󰎙 $script:cachedNodeVersion"
+          return "$script:cachedNodeVersion"
         }
       }
     }
