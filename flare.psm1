@@ -243,18 +243,22 @@ $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
 }
 
 function Prompt {
-    if ($PWD -ne $global:flare_lastDirectory) {
-        if ($global:flare_backgroundJob -and $global:flare_backgroundJob.State -eq 'Running') {
-            # Stop the background job if the directory changes
-            Stop-Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
-            $global:flare_backgroundJob = $null
-        }
+    if ($global:flare_lastDirectory) {
+        if (-not $PWD.Path.StartsWith($global:flare_lastDirectory.Path)) {
+            if ($global:flare_backgroundJob -and $global:flare_backgroundJob.State -eq 'Running') {
+                # Stop the background job if the directory changes
+                Stop-Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
+                $global:flare_backgroundJob = $null
+            }
 
-        $global:flare_lastDirectory = $PWD
-        # Clear the last render cache when the directory changes
-        $global:flare_lastRenderCache.Clear()
-        $global:flare_resultCache.Clear()
+            # Clear the last render cache when the directory changes
+            $global:flare_lastRenderCache.Clear()
+            $global:flare_resultCache.Clear()
+        }
     }
+
+    $global:flare_lastDirectory = $PWD
+
 
     $topLine = Get-PromptTopLine
     $line = Get-PromptLine
