@@ -105,7 +105,12 @@ function Get-RightPrompt {
             $foreground = $foregroundStyles['brightBlack']
             $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - $(if (($count - 1) -gt 0) { $count - 1 } else { $count })) % $foregroundStyles.Count]
             $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$background$global:flare_promptSeparatorsRight" } else { "$($backgroundStyles['default'])$global:flare_promptTailRight" })"
-            $right = "$background$foreground $pieceResult $separator$right"
+            $right = "$pieceResult $separator$right"
+            $icon = Get-Variable -Name "flare_icons_$pieceName" -Scope Global -ValueOnly -ErrorAction SilentlyContinue
+            if ($icon) {
+                $right = "$icon $right"
+            }
+            $right = "$background$foreground $right"
             $count += 1
         }
     }
