@@ -138,11 +138,22 @@ function Get-PromptLine {
 function Update-MainThreadPieces {
     $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
     # Find the intersection of all prompt pieces and main thread items
-    $mainThreadPieces = $allPieces | Where-Object { $_ -in $global:flare_mainThread }
+    $mainThreadPieces = $allPieces | Where-Object { $_ -in $global:flare_mainThread } 
+    $mainThreadPieces += $allPieces | Where-Object { $_ -notin $global:flare_mainThread } | ForEach-Object { "${_}_fast" }
     $mainThreadResults = Get-PromptPieceResults -Pieces $mainThreadPieces
 
     foreach ($piece in $mainThreadPieces) {
-        $global:flare_resultCache[$piece] = $mainThreadResults[$piece]
+        # Support "fast" versions of pieces when there's no cache data available
+        if ($piece -like '*_fast') {
+            $pieceFast = $piece
+            $piece = $piece -replace '_fast', ''
+            if (-not $global:flare_resultCache.ContainsKey($piece)) {
+                $global:flare_resultCache[$piece] = $mainThreadResults[$pieceFast]
+            }
+        }
+        else {
+            $global:flare_resultCache[$piece] = $mainThreadResults[$piece]
+        }
     }
 }
 
@@ -192,6 +203,8 @@ function Get-PromptTopLine {
 
 Register-EngineEvent -SourceIdentifier PromptDataReceived -Action {
     $null = Wait-Job -Job $global:flare_backgroundJob -ErrorAction SilentlyContinue
+    $null = Remove-Job -Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
+
     $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
     $comparisonPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
     # Check if there are changes between caches for background pieces
