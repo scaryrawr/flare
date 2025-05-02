@@ -6,11 +6,16 @@ function Invoke-FlarePiece {
   )
   try {
     # Source the piece script file
-    . "$PiecesPath/$PieceName.ps1"
+    if (Test-Path "$PiecesPath/$PieceName.ps1") {
+      . "$PiecesPath/$PieceName.ps1"
+    }
         
     # Prepare to execute the command
     $command = "flare_$PieceName"
-        
+    if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
+      return ''
+    }
+    
     # Time the execution
     $timing = [System.Diagnostics.Stopwatch]::StartNew()
     $result = & $command -ErrorAction SilentlyContinue
