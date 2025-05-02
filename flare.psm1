@@ -192,6 +192,8 @@ function Update-BackgroundThreadPieces {
         
         # Store the entire package
         $results["_package_$timestamp"] = $resultsPackage
+        $defaultRunspace.Events.GenerateEvent('Flare.Redraw', $_, $null, $null)
+        Write-Output 'Flare.Redraw event triggered'
     } -ArgumentList $backgroundThreadPieces, $global:flare_resultCache, $mainRunspace, $timestamp
     
     # Update the last job timestamp
@@ -234,7 +236,7 @@ function Get-PromptTopLine {
     "$left$defaultStyle$(' ' * $spaces)$right"
 }
 
-Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
+Register-EngineEvent -SourceIdentifier Flare.Redraw -Action {
     # Check if there are any background jobs to process
     if ($global:flare_backgroundJobs.Count -eq 0) {
         return
@@ -318,6 +320,10 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
         [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
         $global:flare_redrawing = $false
     }
+}
+
+Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
+    New-Event -SourceIdentifier Flare.Redraw -Sender $Sender
 }
 
 # Register a cleanup event handler for when the module is removed
