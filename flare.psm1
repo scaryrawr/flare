@@ -348,7 +348,7 @@ function Prompt {
 
     Set-PSReadLineOption -ExtraPromptLineCount 1
 
-    "$topLine`n$line "
+    "`r$topLine`n$line "
 }
 
 # Add module exports
