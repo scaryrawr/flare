@@ -9,8 +9,8 @@ $global:flare_lastRenderCache = @{}
 # Items we can calculate on the main thread, but should also ignore when comparing changes from the background job
 $global:flare_mainThread = @('os', 'date', 'lastCommand', 'pwd')
 
-# Use an array to track all background jobs
-$global:flare_backgroundJobs = @()
+# Use a concurrent collection to track all background jobs
+$global:flare_backgroundJobs = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
 
 # Track the timestamp of the most recently started job
 $global:flare_lastJobTimestamp = [DateTime]::MinValue
@@ -69,7 +69,7 @@ function Get-LeftPrompt {
         [Parameter(Mandatory = $true)]
         [System.Collections.Hashtable]$Parts
     )
-    
+
     $left = $global:flare_topPrefix
 
     $count = 1
@@ -101,7 +101,7 @@ function Get-RightPrompt {
         [Parameter(Mandatory = $true)]
         [System.Collections.Hashtable]$Parts
     )
-    
+
     $right = ''
     $count = 1
     foreach ($pieceName in $global:flare_rightPieces) {
@@ -144,8 +144,9 @@ function Get-PromptLine {
 function Update-MainThreadPieces {
     $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
     # Find the intersection of all prompt pieces and main thread items
-    $mainThreadPieces = $allPieces | Where-Object { $_ -in $global:flare_mainThread } 
-    $mainThreadPieces += $allPieces | Where-Object { $_ -notin $global:flare_mainThread } | ForEach-Object { "${_}_fast" }
+    $mainThreadPieces = $allPieces | Where-Object { $_ -in $global:flare_mainThread }
+    $mainThreadPieces += $allPieces | Where-Object { ($_ -notin $global:flare_mainThread) -and (-not $global:flare_resultCache.ContainsKey($_)) } | ForEach-Object { "${_}_fast" }
+
     $mainThreadResults = Get-PromptPieceResults -Pieces $mainThreadPieces
 
     foreach ($piece in $mainThreadPieces) {
@@ -153,6 +154,7 @@ function Update-MainThreadPieces {
         if ($piece -like '*_fast') {
             $pieceFast = $piece
             $piece = $piece -replace '_fast', ''
+            # Fast results are only valid when we don't have a cached actual result.
             if (-not $global:flare_resultCache.ContainsKey($piece)) {
                 $global:flare_resultCache[$piece] = $mainThreadResults[$pieceFast]
             }
@@ -168,40 +170,40 @@ function Update-BackgroundThreadPieces {
     # Find the intersection of all prompt pieces and main thread items
     $backgroundThreadPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
     $mainRunspace = [runspace]::DefaultRunspace
-    
+
     # Generate a timestamp for this job
     $timestamp = Get-Date
-    
+
     $job = Start-ThreadJob -Name "Flare Background Update $(Get-Date -Format 'HH:mm:ss.fff')" -ScriptBlock {
         param($pieces, $results, $defaultRunspace, $timestamp)
         Write-Output "Updating background pieces: $pieces at timestamp $timestamp"
         . $using:PSScriptRoot/utils/invokeUtils.ps1
 
         $piecesResults = Get-PromptPieceResults -Pieces $pieces -PiecesPath $using:PSScriptRoot/pieces
-        
+
         # Create a results package with timestamp
         $resultsPackage = @{
             Timestamp = $timestamp
             Results   = @{}
         }
-        
+
         foreach ($piece in $pieces) {
             Write-Output "Piece: $piece, Result: $($piecesResults[$piece])"
             $resultsPackage.Results[$piece] = $piecesResults[$piece]
         }
-        
+
         # Store the entire package
         $results["_package_$timestamp"] = $resultsPackage
         $defaultRunspace.Events.GenerateEvent('Flare.Redraw', $_, $null, $null)
         Write-Output 'Flare.Redraw event triggered'
     } -ArgumentList $backgroundThreadPieces, $global:flare_resultCache, $mainRunspace, $timestamp
-    
+
     # Update the last job timestamp
     $global:flare_lastJobTimestamp = $timestamp
-    
-    # Add the new job and its timestamp to our tracking array
+
+    # Add the new job and its timestamp to our tracking collection
     $job | Add-Member -NotePropertyName Timestamp -NotePropertyValue $timestamp
-    $global:flare_backgroundJobs += $job
+    $global:flare_backgroundJobs.Add($job)
 }
 
 function Get-PromptTopLine {
@@ -227,8 +229,7 @@ function Get-PromptTopLine {
 
     # Figure out spacing between left and right prompts
     # Get the window width and subtract the current cursor position
-    $width = $Host.UI.RawUI.WindowSize.Width - $Host.UI.RawUI.CursorPosition.X
-    $spaces = $width - ($($left -replace $escapeRegex).Length + $($right -replace $escapeRegex).Length)
+    $spaces = $Host.UI.RawUI.WindowSize.Width - ($($left -replace $escapeRegex).Length + $($right -replace $escapeRegex).Length)
 
     # Ensure spaces is not negative
     if ($spaces -lt 0) { $spaces = 0 }
@@ -247,21 +248,21 @@ Register-EngineEvent -SourceIdentifier Flare.Redraw -Action {
     if ($completedJobs.Count -eq 0) {
         return
     }
-    
+
     # Find the newest completed job
     $newestCompletedJob = $completedJobs | Sort-Object -Property Timestamp -Descending | Select-Object -First 1
-    
+
     # Process the newest job first to get its results
     if ($newestCompletedJob) {
         $null = Wait-Job -Job $newestCompletedJob -ErrorAction SilentlyContinue
-        
+
         # Find and extract the package with the timestamp from the result cache
         $packageKeys = $global:flare_resultCache.Keys | Where-Object { $_ -like '_package_*' }
-        
+
         # Find the newest package by timestamp
         $newestPackage = $null
         $newestPackageTimestamp = [DateTime]::MinValue
-        
+
         foreach ($key in $packageKeys) {
             $package = $global:flare_resultCache[$key]
             if ($package.Timestamp -gt $newestPackageTimestamp) {
@@ -269,14 +270,14 @@ Register-EngineEvent -SourceIdentifier Flare.Redraw -Action {
                 $newestPackage = $package
             }
         }
-        
+
         # Only apply results from the newest completed job
         if ($newestPackage) {
             # Apply the results to the main cache
             foreach ($piece in $newestPackage.Results.Keys) {
                 $global:flare_resultCache[$piece] = $newestPackage.Results[$piece]
             }
-            
+
             # Clean up packages that are no longer needed
             foreach ($key in $packageKeys) {
                 $null = $global:flare_resultCache.TryRemove($key, [ref]$null)
@@ -288,9 +289,13 @@ Register-EngineEvent -SourceIdentifier Flare.Redraw -Action {
     foreach ($job in $completedJobs) {
         $null = Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
     }
-    
-    # Remove completed jobs from our tracking array
-    $global:flare_backgroundJobs = ($global:flare_backgroundJobs | Where-Object { $_.State -eq 'Running' }) ?? @()
+
+    # Remove completed jobs from our tracking collection
+    $newBag = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
+    foreach ($job in ($global:flare_backgroundJobs | Where-Object { $_.State -eq 'Running' })) {
+        $newBag.Add($job)
+    }
+    $global:flare_backgroundJobs = $newBag
 
     $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
     $comparisonPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
@@ -305,7 +310,7 @@ Register-EngineEvent -SourceIdentifier Flare.Redraw -Action {
             }
         }
     }
-    
+
     # Only redraw prompt if changes were detected
     if ($hasChanges) {
         # Update the lastRenderCache with current values
@@ -322,9 +327,9 @@ Register-EngineEvent -SourceIdentifier Flare.Redraw -Action {
     }
 }
 
-Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
-    New-Event -SourceIdentifier Flare.Redraw -Sender $Sender
-}
+# Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
+#     New-Event -SourceIdentifier Flare.Redraw -Sender $Sender
+# }
 
 # Register a cleanup event handler for when the module is removed
 $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
@@ -334,7 +339,8 @@ $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
         Stop-Job -Job $job -Force -ErrorAction SilentlyContinue
         Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
     }
-    $global:flare_backgroundJobs = @()
+
+    $global:flare_backgroundJobs = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
 }
 
 function Prompt {
@@ -385,7 +391,7 @@ Set-PSReadLineKeyHandler -Key Enter -BriefDescription 'Clear prompt and rewrite 
 
     # Clear the current line and the next line by overwriting with spaces
     [System.Console]::Write(' ' * $consoleWidth * 2)
-    
+
     # Rewrite the user's input prefixed with '>'
     [System.Console]::SetCursorPosition(0, [System.Console]::CursorTop - 1)
     Write-Host "$(Get-PromptLine) $($inputLine -join '')" -NoNewline
