@@ -13,6 +13,8 @@ $global:flare_backgroundJob = $null
 
 $global:flare_lastDirectory = $null
 
+$global:flare_redrawing = $false
+
 $defaultStyle = "`e[0m"
 $foregroundStyles = [ordered]@{
     'default'       = "`e[39m"
@@ -162,6 +164,11 @@ function Update-BackgroundThreadPieces {
     # Find the intersection of all prompt pieces and main thread items
     $backgroundThreadPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
     $mainRunspace = [runspace]::DefaultRunspace
+    if ($global:flare_backgroundJob) {
+        Stop-Job -Job $global:flare_backgroundJob -ErrorAction SilentlyContinue
+        Remove-Job -Job $global:flare_backgroundJob -ErrorAction SilentlyContinue
+    }
+
     $global:flare_backgroundJob = Start-ThreadJob -Name 'Flare Background Update' -ScriptBlock {
         param($pieces, $results, $defaultRunspace)
         Write-Output "Updating background pieces: $pieces"
@@ -172,15 +179,18 @@ function Update-BackgroundThreadPieces {
             Write-Output "Piece: $piece, Result: $($piecesResults[$piece])"
             $results[$piece] = $piecesResults[$piece]
         }
-
-        $defaultRunspace.Events.GenerateEvent('PromptDataReceived', $_, $null, $null)
-        Write-Output 'PromptDataReceived event triggered'
     } -ArgumentList $backgroundThreadPieces, $global:flare_resultCache, $mainRunspace
 }
 
 function Get-PromptTopLine {
+    param(
+        [bool]$DisableBackground = $false
+    )
+
     Update-MainThreadPieces
-    Update-BackgroundThreadPieces
+    if (-not $DisableBackground) {
+        Update-BackgroundThreadPieces
+    }
 
     $results = @{}
     foreach ($piece in $global:flare_resultCache.Keys) {
@@ -201,7 +211,12 @@ function Get-PromptTopLine {
     "$left$defaultStyle$(' ' * $spaces)$right"
 }
 
-Register-EngineEvent -SourceIdentifier PromptDataReceived -Action {
+Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
+    # No need to refresh while the job is running, or if there was no background job
+    if (-not $global:flare_backgroundJob -or (($global:flare_backgroundJob -and $global:flare_backgroundJob.State -eq 'Running'))) {
+        return
+    }
+
     $null = Wait-Job -Job $global:flare_backgroundJob -ErrorAction SilentlyContinue
     $null = Remove-Job -Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
 
@@ -212,8 +227,7 @@ Register-EngineEvent -SourceIdentifier PromptDataReceived -Action {
     foreach ($piece in $comparisonPieces) {
         if ($global:flare_resultCache.ContainsKey($piece)) {
             # If piece is in result cache but not in render cache or values differ
-            if (-not $global:flare_lastRenderCache.ContainsKey($piece) -or 
-                $global:flare_resultCache[$piece] -ne $global:flare_lastRenderCache[$piece]) {
+            if ($global:flare_resultCache[$piece] -ne $global:flare_lastRenderCache[$piece]) {
                 $hasChanges = $true
                 break
             }
@@ -228,9 +242,11 @@ Register-EngineEvent -SourceIdentifier PromptDataReceived -Action {
                 $global:flare_lastRenderCache[$piece] = $global:flare_resultCache[$piece]
             }
         }
-        
+
         # Redraw the prompt
+        $global:flare_redrawing = $true
         [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
+        $global:flare_redrawing = $false
     }
 }
 
@@ -245,12 +261,6 @@ $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
 function Prompt {
     if ($global:flare_lastDirectory) {
         if (-not $PWD.Path.StartsWith($global:flare_lastDirectory.Path)) {
-            if ($global:flare_backgroundJob -and $global:flare_backgroundJob.State -eq 'Running') {
-                # Stop the background job if the directory changes
-                Stop-Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
-                $global:flare_backgroundJob = $null
-            }
-
             # Clear the last render cache when the directory changes
             $global:flare_lastRenderCache.Clear()
             $global:flare_resultCache.Clear()
@@ -260,7 +270,7 @@ function Prompt {
     $global:flare_lastDirectory = $PWD
 
 
-    $topLine = Get-PromptTopLine
+    $topLine = Get-PromptTopLine -DisableBackground $global:flare_redrawing
     $line = Get-PromptLine
 
     Set-PSReadLineOption -ExtraPromptLineCount 1
