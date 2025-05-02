@@ -169,13 +169,12 @@ function Update-BackgroundThreadPieces {
     $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
     # Find the intersection of all prompt pieces and main thread items
     $backgroundThreadPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
-    $mainRunspace = [runspace]::DefaultRunspace
 
     # Generate a timestamp for this job
     $timestamp = Get-Date
 
     $job = Start-ThreadJob -Name "Flare Background Update $(Get-Date -Format 'HH:mm:ss.fff')" -ScriptBlock {
-        param($pieces, $results, $defaultRunspace, $timestamp)
+        param($pieces, $results, $timestamp)
         Write-Output "Updating background pieces: $pieces at timestamp $timestamp"
         . $using:PSScriptRoot/utils/invokeUtils.ps1
 
@@ -194,9 +193,7 @@ function Update-BackgroundThreadPieces {
 
         # Store the entire package
         $results["_package_$timestamp"] = $resultsPackage
-        $defaultRunspace.Events.GenerateEvent('Flare.Redraw', $_, $null, $null)
-        Write-Output 'Flare.Redraw event triggered'
-    } -ArgumentList $backgroundThreadPieces, $global:flare_resultCache, $mainRunspace, $timestamp
+    } -ArgumentList $backgroundThreadPieces, $global:flare_resultCache, $timestamp
 
     # Update the last job timestamp
     $global:flare_lastJobTimestamp = $timestamp
@@ -237,7 +234,7 @@ function Get-PromptTopLine {
     "$left$defaultStyle$(' ' * $spaces)$right"
 }
 
-Register-EngineEvent -SourceIdentifier Flare.Redraw -Action {
+Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
     # Check if there are any background jobs to process
     if ($global:flare_backgroundJobs.Count -eq 0) {
         return

@@ -93,8 +93,10 @@ function Remove-TestEnvironment {
     Write-Host "Cleaning up temporary test environment..." -ForegroundColor Cyan
     
     if (Test-Path $TempDir) {
-        Remove-Item -Path $TempDir -Recurse -Force
-        Write-Host "✅ Temporary test environment removed" -ForegroundColor Green
+        Remove-Item -Path $TempDir -Recurse -Force -ErrorAction SilentlyContinue
+        if ($?) {
+            Write-Host "✅ Temporary test environment removed" -ForegroundColor Green
+        }
     }
 }
 
