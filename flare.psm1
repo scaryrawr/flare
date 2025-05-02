@@ -290,7 +290,7 @@ Register-EngineEvent -SourceIdentifier Flare.Redraw -Action {
     }
     
     # Remove completed jobs from our tracking array
-    $global:flare_backgroundJobs = $global:flare_backgroundJobs | Where-Object { $_.State -eq 'Running' }
+    $global:flare_backgroundJobs = ($global:flare_backgroundJobs | Where-Object { $_.State -eq 'Running' })
 
     $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
     $comparisonPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
