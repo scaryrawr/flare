@@ -9,7 +9,11 @@ $global:flare_lastRenderCache = @{}
 # Items we can calculate on the main thread, but should also ignore when comparing changes from the background job
 $global:flare_mainThread = @('os', 'date', 'lastCommand', 'pwd')
 
-$global:flare_backgroundJob = $null
+# Use an array to track all background jobs
+$global:flare_backgroundJobs = @()
+
+# Track the timestamp of the most recently started job
+$global:flare_lastJobTimestamp = [DateTime]::MinValue
 
 $global:flare_lastDirectory = $null
 
@@ -164,22 +168,38 @@ function Update-BackgroundThreadPieces {
     # Find the intersection of all prompt pieces and main thread items
     $backgroundThreadPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
     $mainRunspace = [runspace]::DefaultRunspace
-    if ($global:flare_backgroundJob) {
-        Stop-Job -Job $global:flare_backgroundJob -ErrorAction SilentlyContinue
-        Remove-Job -Job $global:flare_backgroundJob -ErrorAction SilentlyContinue
-    }
-
-    $global:flare_backgroundJob = Start-ThreadJob -Name 'Flare Background Update' -ScriptBlock {
-        param($pieces, $results, $defaultRunspace)
-        Write-Output "Updating background pieces: $pieces"
+    
+    # Generate a timestamp for this job
+    $timestamp = Get-Date
+    
+    $job = Start-ThreadJob -Name "Flare Background Update $(Get-Date -Format 'HH:mm:ss.fff')" -ScriptBlock {
+        param($pieces, $results, $defaultRunspace, $timestamp)
+        Write-Output "Updating background pieces: $pieces at timestamp $timestamp"
         . $using:PSScriptRoot/utils/invokeUtils.ps1
 
         $piecesResults = Get-PromptPieceResults -Pieces $pieces -PiecesPath $using:PSScriptRoot/pieces
+        
+        # Create a results package with timestamp
+        $resultsPackage = @{
+            Timestamp = $timestamp
+            Results   = @{}
+        }
+        
         foreach ($piece in $pieces) {
             Write-Output "Piece: $piece, Result: $($piecesResults[$piece])"
-            $results[$piece] = $piecesResults[$piece]
+            $resultsPackage.Results[$piece] = $piecesResults[$piece]
         }
-    } -ArgumentList $backgroundThreadPieces, $global:flare_resultCache, $mainRunspace
+        
+        # Store the entire package
+        $results["_package_$timestamp"] = $resultsPackage
+    } -ArgumentList $backgroundThreadPieces, $global:flare_resultCache, $mainRunspace, $timestamp
+    
+    # Update the last job timestamp
+    $global:flare_lastJobTimestamp = $timestamp
+    
+    # Add the new job and its timestamp to our tracking array
+    $job | Add-Member -NotePropertyName Timestamp -NotePropertyValue $timestamp
+    $global:flare_backgroundJobs += $job
 }
 
 function Get-PromptTopLine {
@@ -194,7 +214,10 @@ function Get-PromptTopLine {
 
     $results = @{}
     foreach ($piece in $global:flare_resultCache.Keys) {
-        $results[$piece] = $global:flare_resultCache[$piece]
+        # Skip our package keys when building prompt data
+        if (-not $piece.StartsWith('_package_')) {
+            $results[$piece] = $global:flare_resultCache[$piece]
+        }
     }
 
     $left = Get-LeftPrompt -Parts $results
@@ -212,13 +235,60 @@ function Get-PromptTopLine {
 }
 
 Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
-    # No need to refresh while the job is running, or if there was no background job
-    if (-not $global:flare_backgroundJob -or (($global:flare_backgroundJob -and $global:flare_backgroundJob.State -eq 'Running'))) {
+    # Check if there are any background jobs to process
+    if ($global:flare_backgroundJobs.Count -eq 0) {
         return
     }
 
-    $null = Wait-Job -Job $global:flare_backgroundJob -ErrorAction SilentlyContinue
-    $null = Remove-Job -Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
+    # Process completed jobs
+    $completedJobs = $global:flare_backgroundJobs | Where-Object { $_.State -ne 'Running' }
+    if ($completedJobs.Count -eq 0) {
+        return
+    }
+    
+    # Find the newest completed job
+    $newestCompletedJob = $completedJobs | Sort-Object -Property Timestamp -Descending | Select-Object -First 1
+    
+    # Process the newest job first to get its results
+    if ($newestCompletedJob) {
+        $null = Wait-Job -Job $newestCompletedJob -ErrorAction SilentlyContinue
+        
+        # Find and extract the package with the timestamp from the result cache
+        $packageKeys = $global:flare_resultCache.Keys | Where-Object { $_ -like '_package_*' }
+        
+        # Find the newest package by timestamp
+        $newestPackage = $null
+        $newestPackageTimestamp = [DateTime]::MinValue
+        
+        foreach ($key in $packageKeys) {
+            $package = $global:flare_resultCache[$key]
+            if ($package.Timestamp -gt $newestPackageTimestamp) {
+                $newestPackageTimestamp = $package.Timestamp
+                $newestPackage = $package
+            }
+        }
+        
+        # Only apply results from the newest completed job
+        if ($newestPackage) {
+            # Apply the results to the main cache
+            foreach ($piece in $newestPackage.Results.Keys) {
+                $global:flare_resultCache[$piece] = $newestPackage.Results[$piece]
+            }
+            
+            # Clean up packages that are no longer needed
+            foreach ($key in $packageKeys) {
+                $null = $global:flare_resultCache.TryRemove($key, [ref]$null)
+            }
+        }
+    }
+
+    # Wait for and clean up all completed jobs
+    foreach ($job in $completedJobs) {
+        $null = Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+    }
+    
+    # Remove completed jobs from our tracking array
+    $global:flare_backgroundJobs = $global:flare_backgroundJobs | Where-Object { $_.State -eq 'Running' }
 
     $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
     $comparisonPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
@@ -253,9 +323,12 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
 # Register a cleanup event handler for when the module is removed
 $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
     Get-EventSubscriber | Unregister-Event
-    if ($global:flare_backgroundJob) {
-        Stop-Job -Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
+    # Clean up all background jobs
+    foreach ($job in $global:flare_backgroundJobs) {
+        Stop-Job -Job $job -Force -ErrorAction SilentlyContinue
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
     }
+    $global:flare_backgroundJobs = @()
 }
 
 function Prompt {
