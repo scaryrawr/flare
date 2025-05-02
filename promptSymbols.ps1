@@ -19,6 +19,7 @@ $global:flare_icons_git ??= ''
 $global:flare_icons_zig ??= ''
 $global:flare_icons_rust ??= ''
 $global:flare_icons_node ??= '󰎙'
+$global:flare_icons_python ??= ''
 
 $global:flare_dateFormat ??= 'HH:mm:ss'
 
@@ -33,5 +34,6 @@ $global:flare_rightPieces ??= @(
   'node'
   'rust'
   'zig'
+  'python'
   'lastCommand'
 )
