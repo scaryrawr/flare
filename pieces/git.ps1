@@ -1,27 +1,5 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
-# global level variables to track git state
-$global:flare_gitFileWatcher ??= $null
-$global:flare_currentGitDir ??= $null
-$global:flare_cachedGitInfo ??= @{ Branch = $null; Status = $null }
-$global:flare_gitStatusJob ??= $null
-$global:flare_lastEventTime ??= $null
-
-$global:flare_gitStatusFunc ??= {
-  param(
-    [Parameter(Mandatory = $false)]
-    [string]$GitRepoPath
-  )
-  
-  # If we're not in a git repo, return empty
-  if (-not $GitRepoPath) {
-    return @{ Branch = $null; Status = $null }
-  }
-  
-  # Get fresh git status
-  return Get-GitBranchAndStatus -GitRepoPath $GitRepoPath
-}
-
 # Updates the cached git status when files change in the repository
 function Update-GitStatus {
   param(
@@ -29,7 +7,13 @@ function Update-GitStatus {
     [string]$GitRepoPath
   )
 
-  return & $global:flare_gitStatusFunc -GitRepoPath $GitRepoPath
+  # If we're not in a git repo, return empty
+  if (-not $GitRepoPath) {
+    return @{ Branch = $null; Status = $null }
+  }
+  
+  # Get fresh git status
+  return Get-GitBranchAndStatus -GitRepoPath $GitRepoPath
 }
 
 function Format-GitStatus {
@@ -181,170 +165,6 @@ function Get-GitBranchAndStatus {
   }
 }
 
-function flare_init_git {
-  $gitDir = FindFileInParentDirectories '.git'
-  if (-not $gitDir) {
-    return
-  }
-  
-  # Get the parent directory of .git which is the actual repo directory
-  $repoDir = Split-Path -Parent $gitDir
-  $global:flare_currentGitDir = $repoDir
-  
-  # Configure the FileSystemWatcher
-  try {
-    # Reuse existing watcher if possible
-    if ($global:flare_gitFileWatcher) {
-      # Just update the path of the existing watcher
-      $global:flare_gitFileWatcher.EnableRaisingEvents = $false
-      $global:flare_gitFileWatcher.Path = $repoDir
-      $global:flare_gitFileWatcher.EnableRaisingEvents = $true
-    }
-    else {
-      # Create new watcher only if one doesn't exist
-      $global:flare_gitFileWatcher = New-Object System.IO.FileSystemWatcher
-      $global:flare_gitFileWatcher.Path = $repoDir
-      $global:flare_gitFileWatcher.IncludeSubdirectories = $true
-      
-      # Watch for any changes that might affect git status
-      $global:flare_gitFileWatcher.NotifyFilter = [System.IO.NotifyFilters]::FileName -bor 
-      [System.IO.NotifyFilters]::DirectoryName -bor
-      [System.IO.NotifyFilters]::LastWrite -bor
-      [System.IO.NotifyFilters]::CreationTime
-      
-      # Register for change events, events are fired (sequentially)
-      $writeHandler = {
-        # Get the full path from event args
-        $path = $eventArgs.FullPath
-
-        # Try to find .gitignore file
-        $repoPath = $global:flare_currentGitDir
-        $gitignorePath = Join-Path -Path $repoPath -ChildPath ".gitignore"
-
-        if (Test-Path $gitignorePath) {
-          # Read gitignore patterns
-          $gitignorePatterns = Get-Content -Path $gitignorePath
-
-          # Convert the patterns to regex for matching
-          $regexPatterns = $gitignorePatterns | Where-Object { 
-            $_ -and -not $_.StartsWith('#') -and $_.Trim() 
-          } | ForEach-Object {
-            $pattern = $_.Trim()
-            $pattern = $pattern -replace '\.', '\.'
-            $pattern = $pattern -replace '\*', '.*'
-            $pattern = $pattern -replace '\?', '.'
-            "^$pattern$|^$pattern\\.*|.*\\$pattern$|.*\\$pattern\\.*"
-          }
-
-          # Check if path matches any gitignore pattern
-          $relativePath = $path.Substring($repoPath.Length).TrimStart('\', '/')
-          foreach ($regex in $regexPatterns) {
-            if ($relativePath -match $regex) {
-              return
-            }
-          }
-        }
-
-        if (($null -ne $global:flare_gitStatusJob) -and $global:flare_gitStatusJob.State -eq 'Running') {
-          return  # Skip if a job is already running
-        }
-
-        $global:flare_lastEventTime = Get-Date
-
-        $global:flare_gitStatusJob = Start-ThreadJob -ArgumentList $eventArgs, $global:flare_cachedGitInfo -ScriptBlock {
-          param($evt, $gitInfoCache)
-          $path = $evt.FullPath
-          $gitDir = & $global:flare_findFileInParentDirectories -FileName '.git' -StartDirectory $path
-
-          # Wait for any child git processes of this PowerShell instance to finish before continuing (cross-platform)
-          $pwshPid = $PID
-          if ($IsWindows) {
-            $gitProcs = Get-CimInstance Win32_Process | Where-Object {
-              $_.Name -match '^git(\.exe)?$' -and $_.ParentProcessId -eq $pwshPid
-            }
-            foreach ($proc in $gitProcs) {
-              try {
-                $p = Get-Process -Id $proc.ProcessId -ErrorAction SilentlyContinue
-                if ($p) {
-                  $p.WaitForExit()
-                }
-              }
-              catch {}
-            }
-          }
-          else {
-            # On Unix-like systems, use ps to find child git processes
-            # On Unix-like systems, use ps to find child git processes
-            $gitProcs = if ($IsMacOS) {
-              # macOS BSD-style ps
-              ps -o pid=, ppid=, comm= | Where-Object { $_ -match 'git$' }
-            }
-            else {
-              # Linux GNU-style ps
-              ps -o pid=, ppid=, comm= | Where-Object { $_ -match 'git$' }
-            }
-
-            # Process the output in a cross-platform way
-            $gitProcs = $gitProcs | ForEach-Object {
-              $fields = ($_ -replace '^\s+|\s+$', '') -split '\s+'
-              [PSCustomObject]@{ 
-                PID  = [int]$fields[0]
-                PPID = [int]$fields[1]
-                CMD  = $fields[2] 
-              }
-            } | Where-Object { $_.PPID -eq $pwshPid }
-
-            foreach ($proc in $gitProcs) {
-              try {
-                # Wait for the process to exit
-                while (Get-Process -Id $proc.PID -ErrorAction SilentlyContinue) {
-                  Start-Sleep -Milliseconds 100
-                }
-              }
-              catch {}
-            }
-          }
-
-          $freshGitInfo = & $global:flare_gitStatusFunc -GitRepoPath $gitDir
-          $gitInfoCache.Branch = $freshGitInfo.Branch
-          $gitInfoCache.Status = $freshGitInfo.Status
-        }
-      }
-      
-      # Register events - changes to files and directories will trigger the same handler
-      $null = Register-ObjectEvent -InputObject $global:flare_gitFileWatcher -EventName Created -Action $writeHandler
-      $null = Register-ObjectEvent -InputObject $global:flare_gitFileWatcher -EventName Changed -Action $writeHandler
-      $null = Register-ObjectEvent -InputObject $global:flare_gitFileWatcher -EventName Deleted -Action $writeHandler
-      $null = Register-ObjectEvent -InputObject $global:flare_gitFileWatcher -EventName Renamed -Action $writeHandler
-      
-      # Enable the watcher
-      $global:flare_gitFileWatcher.EnableRaisingEvents = $true
-    }
-  }
-  catch {
-    Write-Error "Failed to initialize git FileSystemWatcher: $_"
-    $global:flare_gitFileWatcher = $null
-  }
-}
-
-function flare_cleanup_git {
-  # Clean up the FileSystemWatcher and its event handlers
-  if ($global:flare_gitFileWatcher) {
-    $global:flare_gitFileWatcher.EnableRaisingEvents = $false
-    $global:flare_gitFileWatcher.Dispose()
-    $global:flare_gitFileWatcher = $null
-    
-    # Clean up any registered events
-    Get-EventSubscriber | Where-Object { 
-      $_.SourceObject -is [System.IO.FileSystemWatcher] -and 
-      $_.SourceObject.Path -eq $global:flare_currentGitDir 
-    } | Unregister-Event
-  }
-  
-  $global:flare_currentGitDir = $null
-  $global:flare_cachedGitInfo = @{ Branch = $null; Status = $null }
-}
-
 function Get-GitRepoPath {
   # Find git directory using FindFileInParentDirectories (faster than git command)
   $gitDir = FindFileInParentDirectories '.git'
@@ -353,25 +173,6 @@ function Get-GitRepoPath {
   }
   
   return Split-Path -Parent $gitDir
-}
-
-function Update-GitWatcher {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$RepoPath
-  )
-  
-  # Check if we need to initialize or update the watcher
-  if (-not $global:flare_gitFileWatcher) {
-    # Initialize the watcher if it doesn't exist
-    $global:flare_currentGitDir = $RepoPath
-    flare_init_git
-  }
-  # Only update if we've changed directories
-  elseif ($global:flare_currentGitDir -ne $RepoPath) {
-    $global:flare_currentGitDir = $RepoPath
-    flare_init_git  # This will reuse the existing watcher
-  }
 }
 
 function Format-GitOutput {
@@ -383,84 +184,29 @@ function Format-GitOutput {
     [string]$Status
   )
   
-  $global:flare_gitIcon ??= ''
-  
   if (-not $Branch) {
     return ''
   }
   
   if ($Status) {
-    return "$global:flare_gitIcon $Branch $Status"
+    return "$Branch $Status"
   }
   else {
-    return "$global:flare_gitIcon $Branch"
+    return "$Branch"
   }
-}
-
-function Test-GitStatusUpdateNeeded {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$GitRepoPath
-  )
-  
-  return ($GitRepoPath -ne $global:flare_currentGitDir) -or ((-not $global:flare_cachedGitInfo.Branch) -and (-not $global:flare_cachedGitInfo.Status))
 }
 
 function flare_git {
   # Get repository path
   $repoPath = Get-GitRepoPath
   
-  # Not in a git repo, clean up if needed
+  # Not in a git repo
   if (-not $repoPath) { 
-    if ($global:flare_gitFileWatcher) {
-      flare_cleanup_git
-    }
     return '' 
   }
-  
-  # Check if we should force an update of the git status
-  if (Test-GitStatusUpdateNeeded $repoPath) {
-    $global:flare_cachedGitInfo = Update-GitStatus -GitRepoPath $repoPath
-  }
 
-  # Update or initialize git watcher
-  Update-GitWatcher -RepoPath $repoPath
 
-  # Don't wait longer than 250ms for any background updates
-  $timeout = [datetime]::Now.AddMilliseconds(250)
-
-  # Define an array of wait conditions to process
-  $waitConditions = @(
-    # Wait for job to start if there was a recent event
-    @{
-      ShouldEnterLoop = { $global:flare_lastEventTime -and (Get-Date) -lt $global:flare_lastEventTime.AddMilliseconds(100) }
-      LoopCondition   = { (($null -eq $global:flare_gitStatusJob) -or ($global:flare_gitStatusJob.State -ne 'Running')) -and [datetime]::Now -lt $timeout }
-    },
-    # Wait for job to complete if it's running
-    @{
-      ShouldEnterLoop = { $global:flare_gitStatusJob -and $global:flare_gitStatusJob.State -eq 'Running' }
-      LoopCondition   = { $global:flare_gitStatusJob.State -eq 'Running' -and [datetime]::Now -lt $timeout }
-    }
-  )
-
-  # Process each wait condition
-  foreach ($wait in $waitConditions) {
-    # Check if we should enter the wait loop
-    if (& $wait.ShouldEnterLoop) {
-      # Wait while the condition is true
-      while (& $wait.LoopCondition) {
-        Start-Sleep -Milliseconds 10
-      }
-    }
-  }
-
-  # Use cached data if available, otherwise get fresh data
-  if ($global:flare_cachedGitInfo.Branch) {
-    return Format-GitOutput -Branch $global:flare_cachedGitInfo.Branch -Status $global:flare_cachedGitInfo.Status
-  }
-  else {
-    # Fallback to direct calculation if cache not available
-    $gitInfo = Get-GitBranchAndStatus -GitRepoPath $repoPath
-    return Format-GitOutput -Branch $gitInfo.Branch -Status $gitInfo.Status
-  }
+  # Fallback to direct calculation if cache not available
+  $gitInfo = Get-GitBranchAndStatus -GitRepoPath $repoPath
+  return Format-GitOutput -Branch $gitInfo.Branch -Status $gitInfo.Status
 }

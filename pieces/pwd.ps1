@@ -24,5 +24,5 @@ function flare_pwd {
   }
   
   # Join the parts back together
-  " $($result -join [System.IO.Path]::DirectorySeparatorChar)"
+  "$($result -join [System.IO.Path]::DirectorySeparatorChar)"
 }
