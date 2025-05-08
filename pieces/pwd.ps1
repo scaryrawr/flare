@@ -15,7 +15,7 @@ function flare_pwd {
     $isLastPart = ($i -eq $parts.Count - 1)
     $i++
     
-    if ($isLastPart) {
+    if ($isLastPart -or $part.EndsWith(':')) {
       return $part  # Keep the final directory name intact
     }
     else {
