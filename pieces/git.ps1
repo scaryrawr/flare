@@ -1,6 +1,7 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
 # Function to detect git operations (rebase, merge, etc.) and their steps
+# based on https://github.com/IlanCosman/tide/blob/main/functions/_tide_item_git.fish
 function Get-GitOperation {
   param(
     [Parameter(Mandatory = $true)]
