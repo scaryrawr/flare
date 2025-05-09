@@ -342,7 +342,7 @@ $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
 
 function Prompt {
     if ($global:flare_lastDirectory) {
-        if (-not $PWD.Path.StartsWith($global:flare_lastDirectory.Path)) {
+        if ($PWD.Path -ne $global:flare_lastDirectory.Path) {
             # Clear the last render cache when the directory changes
             $global:flare_lastRenderCache.Clear()
             $global:flare_resultCache.Clear()
