@@ -12,9 +12,6 @@ $global:flare_mainThread = @('os', 'date', 'lastCommand', 'pwd')
 # Use a concurrent collection to track all background jobs
 $global:flare_backgroundJobs = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
 
-# Track the timestamp of the most recently started job
-$global:flare_lastJobTimestamp = [DateTime]::MinValue
-
 $global:flare_lastDirectory = $null
 
 $global:flare_redrawing = $false
@@ -194,9 +191,6 @@ function Update-BackgroundThreadPieces {
         # Store the entire package
         $results["_package_$timestamp"] = $resultsPackage
     } -ArgumentList $backgroundThreadPieces, $global:flare_resultCache, $timestamp
-
-    # Update the last job timestamp
-    $global:flare_lastJobTimestamp = $timestamp
 
     # Add the new job and its timestamp to our tracking collection
     $job | Add-Member -NotePropertyName Timestamp -NotePropertyValue $timestamp
