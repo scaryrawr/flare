@@ -1,5 +1,78 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
+# Function to detect git operations (rebase, merge, etc.) and their steps
+# based on https://github.com/IlanCosman/tide/blob/main/functions/_tide_item_git.fish
+function Get-GitOperation {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$GitDir
+  )
+  
+  $operation = $null
+  $step = $null
+  $total = $null
+
+  # Check for rebase-merge (interactive or merge rebase)
+  if (Test-Path "$GitDir/rebase-merge") {
+    if (Test-Path "$GitDir/rebase-merge/msgnum" -and Test-Path "$GitDir/rebase-merge/end") {
+      $step = Get-Content "$GitDir/rebase-merge/msgnum" -Raw
+      $total = Get-Content "$GitDir/rebase-merge/end" -Raw
+      # Trim any whitespace/newlines
+      $step = $step.Trim()
+      $total = $total.Trim()
+    }
+    
+    if (Test-Path "$GitDir/rebase-merge/interactive") {
+      $operation = "rebase-i"
+    }
+    else {
+      $operation = "rebase-m"
+    }
+  } 
+  # Check for rebase-apply (standard rebase/am)
+  elseif (Test-Path "$GitDir/rebase-apply") {
+    if (Test-Path "$GitDir/rebase-apply/next" -and Test-Path "$GitDir/rebase-apply/last") {
+      $step = Get-Content "$GitDir/rebase-apply/next" -Raw
+      $total = Get-Content "$GitDir/rebase-apply/last" -Raw
+      # Trim any whitespace/newlines
+      $step = $step.Trim()
+      $total = $total.Trim()
+    }
+    
+    if (Test-Path "$GitDir/rebase-apply/rebasing") {
+      $operation = "rebase"
+    }
+    elseif (Test-Path "$GitDir/rebase-apply/applying") {
+      $operation = "am"
+    }
+    else {
+      $operation = "am/rebase"
+    }
+  } 
+  # Check for merge
+  elseif (Test-Path "$GitDir/MERGE_HEAD") {
+    $operation = "merge"
+  } 
+  # Check for cherry-pick
+  elseif (Test-Path "$GitDir/CHERRY_PICK_HEAD") {
+    $operation = "cherry-pick"
+  } 
+  # Check for revert
+  elseif (Test-Path "$GitDir/REVERT_HEAD") {
+    $operation = "revert"
+  } 
+  # Check for bisect
+  elseif (Test-Path "$GitDir/BISECT_LOG") {
+    $operation = "bisect"
+  }
+  
+  return @{ 
+    Operation = $operation
+    Step      = $step
+    Total     = $total
+  }
+}
+
 # Updates the cached git status when files change in the repository
 function Update-GitStatus {
   param(
@@ -9,7 +82,7 @@ function Update-GitStatus {
 
   # If we're not in a git repo, return empty
   if (-not $GitRepoPath) {
-    return @{ Branch = $null; Status = $null }
+    return @{ Branch = $null; Status = $null; Operation = $null }
   }
   
   # Get fresh git status
@@ -19,7 +92,10 @@ function Update-GitStatus {
 function Format-GitStatus {
   param(
     [Parameter(Mandatory = $false)]
-    [string[]]$StatusOutput
+    [string[]]$StatusOutput,
+    
+    [Parameter(Mandatory = $false)]
+    [string]$GitDir
   )
     
   if (-not $StatusOutput) {
@@ -35,9 +111,11 @@ function Format-GitStatus {
   $untracked = 0
   $ahead = 0
   $behind = 0
+  $stash = 0
   
+  # Parse git status output
   $StatusOutput | ForEach-Object {
-    if ($_ -match '^\s*([AMDRCU?]+)\s+(.*)') {
+    if ($_ -match '^\s*([AMDRCU?]{1,2})\s+(.*)') {
       # $file = $Matches[2]
       $status = $Matches[1]
       
@@ -47,23 +125,31 @@ function Format-GitStatus {
       }
       # Handle other standard statuses
       else {
-        switch ($status) {
-          'A' { $added += 1 }
-          'M' { $modified += 1 }
-          'D' { $deleted += 1 }
-          'R' { $renamed += 1 }
-          'C' { $copied += 1 }
-          '??' { $untracked += 1 }
+        switch -Regex ($status) {
+          '^A' { $added += 1 }
+          '^M' { $modified += 1 }
+          '^.M' { $modified += 1 }
+          '^D' { $deleted += 1 }
+          '^.D' { $deleted += 1 }
+          '^R' { $renamed += 1 }
+          '^C' { $copied += 1 }
+          '^\?\?' { $untracked += 1 }
         }
       }
     }
-    elseif ($_ -match '(ahead|behind) (\d+)') {
-      $status = $Matches[1]
-      $count = $Matches[2]
-      switch ($status) {
-        'ahead' { $ahead += [int]$count }
-        'behind' { $behind += [int]$count }
-      }
+    elseif ($_ -match 'ahead (\d+)') {
+      $ahead = [int]$Matches[1]
+    }
+    elseif ($_ -match 'behind (\d+)') {
+      $behind = [int]$Matches[1]
+    }
+  }
+
+  # Count stashes if we have a git directory
+  if ($GitDir) {
+    $stashOutput = git stash list 2>$null
+    if ($stashOutput) {
+      $stash = ($stashOutput | Measure-Object).Count
     }
   }
  
@@ -83,6 +169,7 @@ function Format-GitStatus {
   Add-Status '' $copied
   Add-Status '' $unmerged
   Add-Status '' $untracked
+  Add-Status '*' $stash
 
   return $script:statusBuilder
 }
@@ -99,14 +186,17 @@ function Get-GitBranchAndStatus {
 
   # Not in a git repository
   if (-not $gitDir) {
-    return @{ Branch = $null; Status = $null }
+    return @{ Branch = $null; Status = $null; Operation = $null }
   }
 
   # Check if git command is available
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    return @{ Branch = $null; Status = $null }
+    return @{ Branch = $null; Status = $null; Operation = $null }
   }
 
+  # Get git operation information
+  $gitOp = Get-GitOperation -GitDir $gitDir
+  
   # Try to get branch name directly from git files (no git command needed)
   $branch = $null
   
@@ -119,10 +209,20 @@ function Get-GitBranchAndStatus {
     if ($headContent -match 'ref: refs/heads/(.+)$') {
       $branch = $Matches[1]
     }
-    # If not a symbolic ref (detached HEAD), use abbreviated commit hash
-    elseif ($headContent -match '^([0-9a-f]+)') {
-      $commitHash = $Matches[1].Substring(0, 7)  # Use first 7 chars
-      $branch = "detached@$commitHash"
+    # If not a symbolic ref (detached HEAD), check for tags
+    else {
+      $commitHash = $headContent.Trim()
+      
+      # Try to find a tag pointing to this commit
+      $tag = git describe --tags --exact-match $commitHash 2>$null
+      if ($tag) {
+        $branch = "#$tag" # Tag format like in tide
+      }
+      else {
+        # Fallback to short hash
+        $shortHash = $commitHash.Substring(0, 7)
+        $branch = "@$shortHash" # Detached format like in tide
+      }
     }
   }
 
@@ -147,21 +247,21 @@ function Get-GitBranchAndStatus {
       git --no-optional-locks rev-parse --abbrev-ref HEAD 2> $null
     }
     
-    # Process status information using existing Format-GitStatus logic
-    $status = Format-GitStatus -StatusOutput $output
+    # Process status information
+    $status = Format-GitStatus -StatusOutput $output -GitDir $gitDir
   }
   else {
     # If we got the branch without git command, we still need status info
     $output = git --no-optional-locks status -sb --porcelain 2> $null
-    $status = Format-GitStatus -StatusOutput $output
+    $status = Format-GitStatus -StatusOutput $output -GitDir $gitDir
   }
-    
-  # Process status information using existing Format-GitStatus logic
-  $status = Format-GitStatus -StatusOutput $output
   
   return @{ 
-    Branch = $branch
-    Status = $status
+    Branch    = $branch
+    Status    = $status
+    Operation = $gitOp.Operation
+    Step      = $gitOp.Step
+    Total     = $gitOp.Total
   }
 }
 
@@ -181,19 +281,41 @@ function Format-GitOutput {
     [string]$Branch,
     
     [Parameter(Mandatory = $false)]
-    [string]$Status
+    [string]$Status,
+    
+    [Parameter(Mandatory = $false)]
+    [string]$Operation,
+    
+    [Parameter(Mandatory = $false)]
+    [string]$Step,
+    
+    [Parameter(Mandatory = $false)]
+    [string]$Total
   )
   
   if (-not $Branch) {
     return ''
   }
   
+  # Build the output string
+  $output = $Branch
+  
+  # Add operation information if available
+  if ($Operation) {
+    $output += " $Operation"
+    
+    # Add step/total if available
+    if ($Step -and $Total) {
+      $output += " $Step/$Total"
+    }
+  }
+  
+  # Add status information if available
   if ($Status) {
-    return "$Branch $Status"
+    $output += " $Status"
   }
-  else {
-    return "$Branch"
-  }
+  
+  return $output
 }
 
 function flare_git {
@@ -205,8 +327,8 @@ function flare_git {
     return '' 
   }
 
-
-  # Fallback to direct calculation if cache not available
+  # Get git info including branch, status and operation
   $gitInfo = Get-GitBranchAndStatus -GitRepoPath $repoPath
-  return Format-GitOutput -Branch $gitInfo.Branch -Status $gitInfo.Status
+  
+  return Format-GitOutput -Branch $gitInfo.Branch -Status $gitInfo.Status -Operation $gitInfo.Operation -Step $gitInfo.Step -Total $gitInfo.Total
 }
