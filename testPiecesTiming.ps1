@@ -7,7 +7,7 @@ param(
 
 # Set up a temporary test environment
 function New-TestEnvironment {
-    Write-Host "Creating temporary test environment..." -ForegroundColor Cyan
+    Write-Host 'Creating temporary test environment...' -ForegroundColor Cyan
     
     # Create a temporary directory
     $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) "flare_test_$(Get-Random)"
@@ -16,13 +16,13 @@ function New-TestEnvironment {
     # Initialize git repo in temp directory
     Push-Location $tempDir
     git init --quiet
-    git config --local user.name "Flare Test"
-    git config --local user.email "test@example.com"
+    git config --local user.name 'Flare Test'
+    git config --local user.email 'test@example.com'
     
     # Create initial commit to have a valid git repo
-    "# Flare Test Repo" | Out-File -FilePath "README.md" -Encoding utf8
+    '# Flare Test Repo' | Out-File -FilePath 'README.md' -Encoding utf8
     git add README.md
-    git commit -m "Initial commit" --quiet
+    git commit -m 'Initial commit' --quiet
     
     # Create package.json for node.ps1 piece
     @'
@@ -37,7 +37,14 @@ function New-TestEnvironment {
   "author": "",
   "license": "MIT"
 }
-'@ | Out-File -FilePath "package.json" -Encoding utf8
+'@ | Out-File -FilePath 'package.json' -Encoding utf8
+
+    # Create go.mod for go.ps1 piece
+    @'
+module flare-test
+
+go 1.22
+'@ | Out-File -FilePath 'go.mod' -Encoding utf8
     
     # Create Cargo.toml for rust.ps1 piece
     @'
@@ -49,7 +56,7 @@ description = "Test file to trigger rust.ps1 piece"
 license = "MIT"
 
 [dependencies]
-'@ | Out-File -FilePath "Cargo.toml" -Encoding utf8
+'@ | Out-File -FilePath 'Cargo.toml' -Encoding utf8
     
     # Create build.zig for zig.ps1 piece
     @'
@@ -69,14 +76,14 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 }
-'@ | Out-File -FilePath "build.zig" -Encoding utf8
+'@ | Out-File -FilePath 'build.zig' -Encoding utf8
     
     # Add files to git to ensure git status shows something
     git add package.json Cargo.toml build.zig
-    git commit -m "Add project files" --quiet
+    git commit -m 'Add project files' --quiet
     
     # Make a change to trigger git status
-    "# Modified" | Add-Content -Path "README.md" -Encoding utf8
+    '# Modified' | Add-Content -Path 'README.md' -Encoding utf8
     
     Pop-Location
     
@@ -90,12 +97,12 @@ function Remove-TestEnvironment {
         [string]$TempDir
     )
     
-    Write-Host "Cleaning up temporary test environment..." -ForegroundColor Cyan
+    Write-Host 'Cleaning up temporary test environment...' -ForegroundColor Cyan
     
     if (Test-Path $TempDir) {
         Remove-Item -Path $TempDir -Recurse -Force -ErrorAction SilentlyContinue
         if ($?) {
-            Write-Host "✅ Temporary test environment removed" -ForegroundColor Green
+            Write-Host '✅ Temporary test environment removed' -ForegroundColor Green
         }
     }
 }
@@ -103,23 +110,23 @@ function Remove-TestEnvironment {
 # Import the module to access all pieces
 try {
     Import-Module "$PSScriptRoot/flare.psm1" -Force -ErrorAction Stop
-    Write-Host "✅ Flare module loaded successfully" -ForegroundColor Green
+    Write-Host '✅ Flare module loaded successfully' -ForegroundColor Green
 }
 catch {
     Write-Host "❌ Failed to load the Flare module: $_" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "Testing individual pieces performance in controlled environment..."
+Write-Host 'Testing individual pieces performance in controlled environment...'
 Write-Host "Running $Iterations iterations per piece..."
-Write-Host ""
+Write-Host ''
 
 # Create temporary test environment
 $originalLocation = Get-Location
 $tempTestDir = New-TestEnvironment
 
 # Call debugPieceTiming.ps1 with our test environment
-Write-Host "Calling debugPieceTiming.ps1 in test environment..." -ForegroundColor Cyan
+Write-Host 'Calling debugPieceTiming.ps1 in test environment...' -ForegroundColor Cyan
 $anyFailures = $false
 try {
     # Run the debug script
@@ -139,13 +146,13 @@ Set-Location $originalLocation
 Remove-TestEnvironment -TempDir $tempTestDir
 
 # Provide final summary and exit with appropriate code
-Write-Host ""
+Write-Host ''
 if ($anyFailures) {
-    Write-Host "❌ TEST FAILED: One or more pieces or the full prompt failed to load or execute correctly" -ForegroundColor Red
+    Write-Host '❌ TEST FAILED: One or more pieces or the full prompt failed to load or execute correctly' -ForegroundColor Red
     exit 1
 }
 else {
-    Write-Host "✅ TEST PASSED: All pieces and the full prompt loaded and executed successfully" -ForegroundColor Green
+    Write-Host '✅ TEST PASSED: All pieces and the full prompt loaded and executed successfully' -ForegroundColor Green
     exit 0
 }
 
@@ -154,12 +161,12 @@ Set-Location $originalLocation
 Remove-TestEnvironment -TempDir $tempTestDir
 
 # Provide final summary and exit with appropriate code
-Write-Host ""
+Write-Host ''
 if ($anyFailures) {
-    Write-Host "❌ TEST FAILED: One or more pieces or the full prompt failed to load or execute correctly" -ForegroundColor Red
+    Write-Host '❌ TEST FAILED: One or more pieces or the full prompt failed to load or execute correctly' -ForegroundColor Red
     exit 1
 }
 else {
-    Write-Host "✅ TEST PASSED: All pieces and the full prompt loaded and executed successfully" -ForegroundColor Green
+    Write-Host '✅ TEST PASSED: All pieces and the full prompt loaded and executed successfully' -ForegroundColor Green
     exit 0
 }
