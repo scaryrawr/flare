@@ -46,6 +46,23 @@ module flare-test
 go 1.22
 '@ | Out-File -FilePath 'go.mod' -Encoding utf8
     
+    # Create bunfig.toml for bun.ps1 piece
+    @'
+[install]
+cache = "./.bun-cache"
+'@ | Out-File -FilePath 'bunfig.toml' -Encoding utf8
+    
+    # Create pom.xml for java.ps1 piece
+    @'
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.flare</groupId>
+  <artifactId>flare-test</artifactId>
+  <version>1.0.0</version>
+</project>
+'@ | Out-File -FilePath 'pom.xml' -Encoding utf8
+    
     # Create Cargo.toml for rust.ps1 piece
     @'
 [package]
