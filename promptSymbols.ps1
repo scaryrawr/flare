@@ -21,6 +21,9 @@ $global:flare_icons_rust ??= ''
 $global:flare_icons_node ??= '󰎙'
 $global:flare_icons_python ??= ''
 
+# $global:flare_icons_bun ??= ''
+$global:flare_icons_java ??= ''
+
 $global:flare_icons_go ??= ''
 
 $global:flare_dateFormat ??= 'HH:mm:ss'
@@ -37,6 +40,8 @@ $global:flare_rightPieces ??= @(
   'rust'
   'zig'
   'go'
+  'bun'
+  'java'
   'python'
   'lastCommand'
 )
