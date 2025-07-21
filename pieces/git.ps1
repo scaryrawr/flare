@@ -14,7 +14,7 @@ function Get-GitOperation {
 
   # Check for rebase-merge (interactive or merge rebase)
   if (Test-Path "$GitDir/rebase-merge") {
-    if (Test-Path "$GitDir/rebase-merge/msgnum" -and Test-Path "$GitDir/rebase-merge/end") {
+    if ((Test-Path "$GitDir/rebase-merge/msgnum") -and (Test-Path "$GitDir/rebase-merge/end")) {
       $step = Get-Content "$GitDir/rebase-merge/msgnum" -Raw
       $total = Get-Content "$GitDir/rebase-merge/end" -Raw
       # Trim any whitespace/newlines
@@ -31,7 +31,7 @@ function Get-GitOperation {
   } 
   # Check for rebase-apply (standard rebase/am)
   elseif (Test-Path "$GitDir/rebase-apply") {
-    if (Test-Path "$GitDir/rebase-apply/next" -and Test-Path "$GitDir/rebase-apply/last") {
+    if ((Test-Path "$GitDir/rebase-apply/next") -and (Test-Path "$GitDir/rebase-apply/last")) {
       $step = Get-Content "$GitDir/rebase-apply/next" -Raw
       $total = Get-Content "$GitDir/rebase-apply/last" -Raw
       # Trim any whitespace/newlines
@@ -99,7 +99,7 @@ function Format-GitStatus {
   )
     
   if (-not $StatusOutput) {
-    $StatusOutput = git --no-optional-locks status -sb --porcelain 2> $null
+    $StatusOutput = git --no-optional-locks status --porcelain 2> $null
   }
 
   $added = 0
@@ -113,44 +113,39 @@ function Format-GitStatus {
   $behind = 0
   $stash = 0
   
-  # Parse git status output
+  # Parse git status output for file changes
   $StatusOutput | ForEach-Object {
     if ($_ -match '^\s*([AMDRCU?]{1,2})\s+(.*)') {
-      # $file = $Matches[2]
       $status = $Matches[1]
       
-      # Handle unmerged files (conflicts) with priority
-      if ($status -match 'U' -or $status -match 'U{2,}|A{2,}|D{2,}') {
+      # Handle unmerged files (conflicts) - match UU pattern like fish version
+      if ($status -match '^UU') {
         $unmerged += 1
       }
       # Handle other standard statuses
       else {
         switch -Regex ($status) {
-          '^A' { $added += 1 }
-          '^M' { $modified += 1 }
-          '^.M' { $modified += 1 }
-          '^D' { $deleted += 1 }
-          '^.D' { $deleted += 1 }
-          '^R' { $renamed += 1 }
-          '^C' { $copied += 1 }
+          '^[ADMR]' { $added += 1 }      # Staged changes
+          '^.[ADMR]' { $modified += 1 }  # Working directory changes  
           '^\?\?' { $untracked += 1 }
         }
       }
     }
-    elseif ($_ -match 'ahead (\d+)') {
-      $ahead = [int]$Matches[1]
-    }
-    elseif ($_ -match 'behind (\d+)') {
-      $behind = [int]$Matches[1]
-    }
   }
 
-  # Count stashes if we have a git directory
+  # Get stash count
   if ($GitDir) {
     $stashOutput = git stash list 2>$null
     if ($stashOutput) {
       $stash = ($stashOutput | Measure-Object).Count
     }
+  }
+
+  # Get behind/ahead counts using git rev-list like the fish version
+  $revListOutput = git rev-list --count --left-right '@{upstream}...HEAD' 2>$null
+  if ($revListOutput -and $revListOutput -match '(\d+)\s+(\d+)') {
+    $behind = [int]$Matches[1]
+    $ahead = [int]$Matches[2]
   }
  
   $script:statusBuilder = ''
@@ -160,16 +155,13 @@ function Format-GitStatus {
     $script:statusBuilder += "$icon$count"
   }
 
-  Add-Status '' $ahead
-  Add-Status '' $behind
-  Add-Status '' $added
-  Add-Status '' $modified
-  Add-Status '󰆴' $deleted
-  Add-Status '󰑕' $renamed
-  Add-Status '' $copied
-  Add-Status '' $unmerged
-  Add-Status '' $untracked
+  Add-Status '⇣' $behind
+  Add-Status '⇡' $ahead  
   Add-Status '*' $stash
+  Add-Status '~' $unmerged
+  Add-Status '+' $added
+  Add-Status '!' $modified
+  Add-Status '?' $untracked
 
   return $script:statusBuilder
 }
@@ -181,11 +173,15 @@ function Get-GitBranchAndStatus {
     [string]$GitRepoPath
   )
 
-  # Find git directory using FindFileInParentDirectories (faster than git command)
-  $gitDir = $GitRepoPath ?? $(FindFileInParentDirectories '.git')
+  # Find git directory - if GitRepoPath is provided, append .git, otherwise find it
+  if ($GitRepoPath) {
+    $gitDir = Join-Path -Path $GitRepoPath -ChildPath '.git'
+  } else {
+    $gitDir = FindFileInParentDirectories '.git'
+  }
 
   # Not in a git repository
-  if (-not $gitDir) {
+  if (-not $gitDir -or -not (Test-Path $gitDir)) {
     return @{ Branch = $null; Status = $null; Operation = $null }
   }
 
@@ -228,33 +224,27 @@ function Get-GitBranchAndStatus {
 
   # If we couldn't determine branch from HEAD file, fallback to git command
   if (-not $branch) {
-    # Cache is invalid, get fresh data (one git call instead of two)
-    $output = git --no-optional-locks status -sb --porcelain 2> $null
-      
-    # Extract branch name from the first line
-    # Format is usually "## branch...origin/branch [ahead/behind]"
-    $branch = if ($output -and $output -is [array]) {
-      if ($output[0] -match '## (.+?)(?:\.\.\.|$)') {
-        $Matches[1]
+    # Get branch name using git branch --show-current (like fish version)
+    $branch = git branch --show-current 2>$null
+    if (-not $branch) {
+      # Fallback for detached HEAD - try tags first
+      $tag = git tag --points-at HEAD 2>$null | Select-Object -First 1
+      if ($tag) {
+        $branch = "#$tag"
       }
-      else { $null }
+      else {
+        # Get short hash for detached HEAD
+        $shortHash = git rev-parse --short HEAD 2>$null
+        if ($shortHash) {
+          $branch = "@$shortHash"
+        }
+      }
     }
-    elseif ($output -and $output -is [string] -and $output -match '## (.+?)(?:\.\.\.|$)') {
-      $Matches[1]
-    }
-    else {
-      # Fallback if status -sb doesn't work for some reason
-      git --no-optional-locks rev-parse --abbrev-ref HEAD 2> $null
-    }
+  }
     
-    # Process status information
-    $status = Format-GitStatus -StatusOutput $output -GitDir $gitDir
-  }
-  else {
-    # If we got the branch without git command, we still need status info
-    $output = git --no-optional-locks status -sb --porcelain 2> $null
-    $status = Format-GitStatus -StatusOutput $output -GitDir $gitDir
-  }
+  # Get status information using --porcelain (not -sb) like fish version
+  $output = git --no-optional-locks status --porcelain 2> $null
+  $status = Format-GitStatus -StatusOutput $output -GitDir $gitDir
   
   return @{ 
     Branch    = $branch
