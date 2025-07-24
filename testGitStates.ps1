@@ -27,9 +27,8 @@ function Write-TestResult {
         Write-Host "   Actual:   '$Actual'" -ForegroundColor Yellow
     }
     
-    if ($Verbose) {
-        Write-Host "   Output: '$Actual'" -ForegroundColor Cyan
-    }
+    # Always show what the git piece outputs
+    Write-Host "   Git piece output: '$Actual'" -ForegroundColor Cyan
 }
 
 # Function to test git piece output
