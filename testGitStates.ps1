@@ -178,6 +178,81 @@ try {
     # Abort merge to clean up
     git merge --abort | Out-Null
 
+    # Test 13: Ahead commits (with upstream)
+    Write-Host "`n📁 Testing: Ahead commits" -ForegroundColor Blue
+    git checkout -b upstream-test | Out-Null
+    "Upstream content" | Out-File -FilePath "upstream.txt" -Encoding UTF8
+    git add upstream.txt | Out-Null
+    git commit -m "Upstream commit" | Out-Null
+    
+    # Create a "remote" branch to track
+    git checkout main | Out-Null
+    git branch upstream-main upstream-test | Out-Null
+    git checkout upstream-test | Out-Null
+    git branch --set-upstream-to=upstream-main | Out-Null
+    
+    # Make commits ahead of upstream
+    "Ahead content 1" | Out-File -FilePath "ahead1.txt" -Encoding UTF8
+    git add ahead1.txt | Out-Null
+    git commit -m "Ahead commit 1" | Out-Null
+    
+    $result = Test-GitPiece -TestName "Ahead commits" -ExpectedPattern "⇡1" -ShouldContain $true
+    $allTestsPassed = $allTestsPassed -and $result
+
+    # Test 14: Behind commits
+    Write-Host "`n📁 Testing: Behind commits" -ForegroundColor Blue
+    git checkout upstream-main | Out-Null
+    "Behind content" | Out-File -FilePath "behind.txt" -Encoding UTF8
+    git add behind.txt | Out-Null
+    git commit -m "Behind commit" | Out-Null
+    
+    git checkout upstream-test | Out-Null
+    $result = Test-GitPiece -TestName "Behind commits" -ExpectedPattern "⇣1" -ShouldContain $true
+    $allTestsPassed = $allTestsPassed -and $result
+
+    # Test 15: Both ahead and behind (diverged)
+    Write-Host "`n📁 Testing: Both ahead and behind" -ForegroundColor Blue
+    "Ahead content 2" | Out-File -FilePath "ahead2.txt" -Encoding UTF8
+    git add ahead2.txt | Out-Null
+    git commit -m "Ahead commit 2" | Out-Null
+    
+    $result = Test-GitPiece -TestName "Both ahead and behind" -ExpectedPattern "⇣1.*⇡2" -ShouldContain $true
+    $allTestsPassed = $allTestsPassed -and $result
+
+    # Clean up upstream test
+    git checkout main | Out-Null
+    git branch -D upstream-test upstream-main 2>$null | Out-Null
+
+    # Test 16: Rebase conflict
+    Write-Host "`n📁 Testing: Rebase conflict" -ForegroundColor Blue
+    git checkout feature-branch | Out-Null
+    git reset --hard HEAD~1 | Out-Null  # Reset to before merge conflict setup
+    
+    # Create rebase conflict scenario on the same file
+    "Feature change to README" | Out-File -FilePath "README.md" -Encoding UTF8 -Append
+    git add README.md | Out-Null
+    git commit -m "Feature commit for rebase" | Out-Null
+    
+    git checkout main | Out-Null
+    "Main change to README" | Out-File -FilePath "README.md" -Encoding UTF8 -Append
+    git add README.md | Out-Null
+    git commit -m "Main commit for rebase" | Out-Null
+    
+    git checkout feature-branch | Out-Null
+    # Start rebase (will conflict on README.md)
+    git rebase main 2>$null | Out-Null
+    $result = Test-GitPiece -TestName "Rebase operation" -ExpectedPattern "rebase" -ShouldContain $true
+    $allTestsPassed = $allTestsPassed -and $result
+
+    # Test 17: Unmerged files during rebase
+    Write-Host "`n📁 Testing: Rebase unmerged files" -ForegroundColor Blue
+    $result = Test-GitPiece -TestName "Rebase unmerged files" -ExpectedPattern "~1" -ShouldContain $true
+    $allTestsPassed = $allTestsPassed -and $result
+    
+    # Clean up rebase
+    git rebase --abort 2>$null | Out-Null
+    git checkout main | Out-Null
+
     # Summary
     Write-Host "`n📊 Test Summary" -ForegroundColor Magenta
     if ($allTestsPassed) {
