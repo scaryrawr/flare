@@ -115,7 +115,7 @@ function Format-GitStatus {
   
   # Parse git status output for file changes
   $StatusOutput | ForEach-Object {
-    if ($_ -match '^\s*([AMDRCU?]{1,2})\s+(.*)') {
+    if ($_ -match '^\s*(.{2})\s+(.*)') {
       $status = $Matches[1]
       
       # Handle unmerged files (conflicts) - match UU pattern like fish version
@@ -124,10 +124,22 @@ function Format-GitStatus {
       }
       # Handle other standard statuses
       else {
-        switch -Regex ($status) {
-          '^[ADMR]' { $added += 1 }      # Staged changes
-          '^.[ADMR]' { $modified += 1 }  # Working directory changes  
-          '^\?\?' { $untracked += 1 }
+        $stagingChar = $status[0]
+        $workingChar = $status[1]
+        
+        # Count staging area changes (first character)
+        if ($stagingChar -match '[ADMR]') {
+          $added += 1
+        }
+        
+        # Count working directory changes (second character)  
+        if ($workingChar -match '[ADMR]') {
+          $modified += 1
+        }
+        
+        # Count untracked files
+        if ($status -match '^\?\?') {
+          $untracked += 1
         }
       }
     }
