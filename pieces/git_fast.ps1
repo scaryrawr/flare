@@ -1,26 +1,12 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
-# Global cache for git repo info to avoid repeated filesystem calls
-$global:flare_git_cache = @{}
-
 function Get-GitRepoInfo {
   param([string]$Path = (Get-Location))
-  
-  # Use cache key based on current directory
-  $cacheKey = $Path
-  $cached = $global:flare_git_cache[$cacheKey]
-  
-  # Cache hit - return cached result
-  if ($cached -and $cached.Timestamp -gt (Get-Date).AddSeconds(-2)) {
-    return $cached
-  }
   
   # Find .git (file or directory)
   $gitPath = FindFileInParentDirectories '.git' $Path
   if (-not $gitPath) {
-    $result = @{ RepoPath = $null; GitDir = $null; Timestamp = Get-Date }
-    $global:flare_git_cache[$cacheKey] = $result
-    return $result
+    return @{ RepoPath = $null; GitDir = $null }
   }
   
   $repoPath = Split-Path -Parent $gitPath
@@ -39,19 +25,14 @@ function Get-GitRepoInfo {
       }
     }
     catch {
-      $result = @{ RepoPath = $null; GitDir = $null; Timestamp = Get-Date }
-      $global:flare_git_cache[$cacheKey] = $result
-      return $result
+      return @{ RepoPath = $null; GitDir = $null }
     }
   }
   
-  $result = @{ 
+  return @{ 
     RepoPath = $repoPath
     GitDir = $gitDir
-    Timestamp = Get-Date
   }
-  $global:flare_git_cache[$cacheKey] = $result
-  return $result
 }
 
 function Get-TagForCommit {
@@ -186,7 +167,7 @@ function Get-StashCount {
 }
 
 function flare_git_fast {
-  # Get cached repository info
+  # Get repository info
   $repoInfo = Get-GitRepoInfo
   
   if (-not $repoInfo.RepoPath) { 
