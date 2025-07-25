@@ -65,3 +65,17 @@ jobs:
             Write-Host "❌ Flare piece validation failed on ${{ runner.os }}"
             exit 1
           }
+
+      - name: Test Git piece functionality
+        shell: pwsh
+        run: |
+          # Run comprehensive git piece tests covering all git states
+          Write-Host "Running git piece functionality tests on ${{ runner.os }}..."
+          & ${{ github.workspace }}/testGitStates.ps1
+
+          if ($?) {
+            Write-Host "✅ Git piece tests passed successfully on ${{ runner.os }}"
+          } else {
+            Write-Host "❌ Git piece tests failed on ${{ runner.os }}"
+            exit 1
+          }
