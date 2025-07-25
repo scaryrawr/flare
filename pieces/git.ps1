@@ -107,15 +107,10 @@ function flare_git {
     # Get behind/ahead counts
     $behind = 0
     $ahead = 0
-    
-    # Check if upstream exists first
-    $upstream = git rev-parse --abbrev-ref '@{upstream}' 2>$null
-    if ($upstream -and $LASTEXITCODE -eq 0) {
-        $revListOutput = git rev-list --count --left-right '@{upstream}...HEAD' 2>$null
-        if ($revListOutput -and $LASTEXITCODE -eq 0 -and $revListOutput -match '(\d+)\s+(\d+)') {
-            $behind = [int]$Matches[1]
-            $ahead = [int]$Matches[2]
-        }
+    $revListOutput = git rev-list --count --left-right '@{upstream}...HEAD' 2>$null
+    if ($revListOutput -and $revListOutput -match '(\d+)\s+(\d+)') {
+        $behind = [int]$Matches[1]
+        $ahead = [int]$Matches[2]
     }
 
     # Build output string

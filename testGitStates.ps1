@@ -85,9 +85,13 @@ try {
     $allTestsPassed = $allTestsPassed -and $result
 
     # Initialize git repository
-    git init --initial-branch=main | Out-Null
+    git init | Out-Null
+    # Set local config to ensure consistent branch naming
+    git config init.defaultBranch main | Out-Null
     git config user.name "Test User" | Out-Null
     git config user.email "test@example.com" | Out-Null
+    # Ensure we're on main branch regardless of git version/config
+    git checkout -b main 2>$null | Out-Null
 
     # Test 2: Empty repository (no commits)
     Write-Host "`n📁 Testing: Empty repository" -ForegroundColor Blue
@@ -284,6 +288,8 @@ try {
     Push-Location $cloneDir
     git config user.name "Remote User" | Out-Null
     git config user.email "remote@example.com" | Out-Null
+    # Ensure we're on the same branch as the original repo
+    git checkout main 2>$null | Out-Null
     
     "Remote commit 1" | Out-File -FilePath "remote1.txt" -Encoding UTF8
     git add remote1.txt | Out-Null
