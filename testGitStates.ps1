@@ -2,6 +2,13 @@
 
 # Test script for git piece functionality
 # Tests all various git states and operations to ensure the git piece works correctly
+# 
+# Test coverage includes:
+# - Basic states: no repo, empty repo, clean repo, branches, tags, detached HEAD
+# - File status: untracked, staged, modified, stash
+# - Operations: merge, rebase (interactive and standard), cherry-pick
+# - Upstream tracking: ahead, behind, diverged branches
+# - Complex combinations: multiple status types, remote scenarios
 
 param(
     [switch]$Verbose
@@ -252,6 +259,174 @@ try {
     # Clean up rebase
     git rebase --abort 2>$null | Out-Null
     git checkout main | Out-Null
+
+    # Test 18: Complex diverged state with remote
+    Write-Host "`n📁 Testing: Complex diverged state" -ForegroundColor Blue
+    
+    # Create a bare remote repo
+    $remoteDir = Join-Path ([System.IO.Path]::GetTempPath()) "flare-git-remote-$(Get-Random)"
+    git init --bare $remoteDir | Out-Null
+    git remote add origin $remoteDir | Out-Null
+    git push -u origin main 2>$null | Out-Null
+    
+    # Create local commits (ahead)
+    "Local commit 1" | Out-File -FilePath "local1.txt" -Encoding UTF8
+    git add local1.txt | Out-Null
+    git commit -m "Local commit 1" | Out-Null
+    
+    "Local commit 2" | Out-File -FilePath "local2.txt" -Encoding UTF8
+    git add local2.txt | Out-Null
+    git commit -m "Local commit 2" | Out-Null
+    
+    # Simulate remote commits by creating them in a temp clone
+    $cloneDir = Join-Path ([System.IO.Path]::GetTempPath()) "flare-git-clone-$(Get-Random)"
+    git clone $remoteDir $cloneDir 2>$null | Out-Null
+    Push-Location $cloneDir
+    git config user.name "Remote User" | Out-Null
+    git config user.email "remote@example.com" | Out-Null
+    
+    "Remote commit 1" | Out-File -FilePath "remote1.txt" -Encoding UTF8
+    git add remote1.txt | Out-Null
+    git commit -m "Remote commit 1" | Out-Null
+    
+    "Remote commit 2" | Out-File -FilePath "remote2.txt" -Encoding UTF8
+    git add remote2.txt | Out-Null
+    git commit -m "Remote commit 2" | Out-Null
+    
+    "Remote commit 3" | Out-File -FilePath "remote3.txt" -Encoding UTF8
+    git add remote3.txt | Out-Null
+    git commit -m "Remote commit 3" | Out-Null
+    
+    git push origin main 2>$null | Out-Null
+    Pop-Location
+    
+    # Fetch remote changes to create diverged state
+    git fetch origin 2>$null | Out-Null
+    
+    # Should be 2 ahead, 3 behind
+    $result = Test-GitPiece -TestName "Complex diverged state" -ExpectedPattern "⇣3.*⇡2" -ShouldContain $true
+    $allTestsPassed = $allTestsPassed -and $result
+    
+    # Clean up remote test
+    Remove-Item -Path $remoteDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $cloneDir -Recurse -Force -ErrorAction SilentlyContinue
+    git remote remove origin 2>$null | Out-Null
+
+    # Test 19: Complex status combination
+    Write-Host "`n📁 Testing: Complex status combination" -ForegroundColor Blue
+    
+    # Create stash
+    "Stash content" | Out-File -FilePath "stash-file.txt" -Encoding UTF8
+    git add stash-file.txt | Out-Null
+    git stash | Out-Null
+    
+    # Create staged files
+    "Staged content 1" | Out-File -FilePath "staged1.txt" -Encoding UTF8
+    "Staged content 2" | Out-File -FilePath "staged2.txt" -Encoding UTF8
+    git add staged1.txt staged2.txt | Out-Null
+    
+    # Create dirty files
+    "Modified content" | Out-File -FilePath "README.md" -Encoding UTF8 -Append
+    "Modified content" | Out-File -FilePath "local1.txt" -Encoding UTF8 -Append
+    
+    # Create untracked files
+    "Untracked 1" | Out-File -FilePath "untracked1.txt" -Encoding UTF8
+    "Untracked 2" | Out-File -FilePath "untracked2.txt" -Encoding UTF8
+    "Untracked 3" | Out-File -FilePath "untracked3.txt" -Encoding UTF8
+    
+    # Should show stash, staged, dirty, and untracked
+    $result = Test-GitPiece -TestName "Complex status combination" -ExpectedPattern "\*1.*\+2.*!2.*\?3" -ShouldContain $true
+    $allTestsPassed = $allTestsPassed -and $result
+    
+    # Clean up
+    git reset --hard HEAD | Out-Null
+    git clean -fd | Out-Null
+    git stash clear | Out-Null
+
+    # Test 20: Cherry-pick operation
+    Write-Host "`n📁 Testing: Cherry-pick operation" -ForegroundColor Blue
+    
+    # Create a commit on feature branch to cherry-pick
+    git checkout feature-branch | Out-Null
+    "Cherry pick content" | Out-File -FilePath "cherry.txt" -Encoding UTF8
+    git add cherry.txt | Out-Null
+    git commit -m "Commit to cherry-pick" | Out-Null
+    $cherryCommit = git rev-parse HEAD
+    
+    git checkout main | Out-Null
+    
+    # Start cherry-pick that will conflict
+    "Conflicting content" | Out-File -FilePath "cherry.txt" -Encoding UTF8
+    git add cherry.txt | Out-Null
+    git commit -m "Conflicting commit" | Out-Null
+    
+    # This should create a conflict
+    git cherry-pick $cherryCommit 2>$null | Out-Null
+    
+    $result = Test-GitPiece -TestName "Cherry-pick operation" -ExpectedPattern "cherry-pick" -ShouldContain $true
+    $allTestsPassed = $allTestsPassed -and $result
+    
+    # Clean up cherry-pick
+    git cherry-pick --abort 2>$null | Out-Null
+
+    # Test 21: Interactive rebase detection
+    Write-Host "`n📁 Testing: Interactive rebase detection" -ForegroundColor Blue
+    
+    # Create some commits for interactive rebase
+    "Commit 1 content" | Out-File -FilePath "commit1.txt" -Encoding UTF8
+    git add commit1.txt | Out-Null
+    git commit -m "Commit 1 for rebase" | Out-Null
+    
+    "Commit 2 content" | Out-File -FilePath "commit2.txt" -Encoding UTF8
+    git add commit2.txt | Out-Null
+    git commit -m "Commit 2 for rebase" | Out-Null
+    
+    # Create conflicting commit on main
+    git checkout main | Out-Null
+    "Conflicting main content" | Out-File -FilePath "commit1.txt" -Encoding UTF8
+    git add commit1.txt | Out-Null
+    git commit -m "Conflicting main commit" | Out-Null
+    
+    git checkout feature-branch | Out-Null
+    
+    # Start interactive rebase (will conflict)
+    $env:GIT_SEQUENCE_EDITOR = "true"  # Auto-accept the todo list
+    git rebase -i main 2>$null | Out-Null
+    $env:GIT_SEQUENCE_EDITOR = $null
+    
+    $result = Test-GitPiece -TestName "Interactive rebase" -ExpectedPattern "rebase-i.*1/2" -ShouldContain $true
+    $allTestsPassed = $allTestsPassed -and $result
+    
+    # Clean up rebase
+    git rebase --abort 2>$null | Out-Null
+    git checkout main | Out-Null
+
+    # Test 22: Multiple unmerged files
+    Write-Host "`n📁 Testing: Multiple unmerged files" -ForegroundColor Blue
+    
+    # Create multiple conflicting files
+    git checkout feature-branch | Out-Null
+    "Feature content 1" | Out-File -FilePath "conflict1.txt" -Encoding UTF8
+    "Feature content 2" | Out-File -FilePath "conflict2.txt" -Encoding UTF8
+    "Feature content 3" | Out-File -FilePath "conflict3.txt" -Encoding UTF8
+    git add conflict1.txt conflict2.txt conflict3.txt | Out-Null
+    git commit -m "Feature conflicts" | Out-Null
+    
+    git checkout main | Out-Null
+    "Main content 1" | Out-File -FilePath "conflict1.txt" -Encoding UTF8
+    "Main content 2" | Out-File -FilePath "conflict2.txt" -Encoding UTF8
+    "Main content 3" | Out-File -FilePath "conflict3.txt" -Encoding UTF8
+    git add conflict1.txt conflict2.txt conflict3.txt | Out-Null
+    git commit -m "Main conflicts" | Out-Null
+    
+    # Start merge (will have multiple conflicts)
+    git merge feature-branch --no-edit 2>$null | Out-Null
+    
+    $result = Test-GitPiece -TestName "Multiple unmerged files" -ExpectedPattern "merge.*~[1-9]" -ShouldContain $true
+    $allTestsPassed = $allTestsPassed -and $result
+    
+    # Clean up merge
+    git merge --abort | Out-Null
 
     # Summary
     Write-Host "`n📊 Test Summary" -ForegroundColor Magenta
