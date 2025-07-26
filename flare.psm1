@@ -1,7 +1,7 @@
 . $PSScriptRoot/promptSymbols.ps1
 
 # Shared dictionary for background job to store results
-$global:flare_resultCache = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new()
+$global:flare_resultCache = @{}
 
 # Cache for what was last rendered, to be used to compare with result cache
 $global:flare_lastRenderCache = @{}
@@ -9,8 +9,8 @@ $global:flare_lastRenderCache = @{}
 # Items we can calculate on the main thread, but should also ignore when comparing changes from the background job
 $global:flare_mainThread = @('os', 'date', 'lastCommand', 'pwd')
 
-# Use a concurrent collection to track all background jobs
-$global:flare_backgroundJobs = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
+# Track single background job instead of multiple
+$global:flare_backgroundJob = $null
 
 $global:flare_lastDirectory = $null
 
@@ -167,34 +167,34 @@ function Update-BackgroundThreadPieces {
     # Find the intersection of all prompt pieces and main thread items
     $backgroundThreadPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
 
-    # Generate a timestamp for this job
-    $timestamp = Get-Date
+    # If there's already a background job running, stop it first
+    if ($global:flare_backgroundJob -and $global:flare_backgroundJob.State -eq 'Running') {
+        Stop-Job -Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
+        Remove-Job -Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
+        $global:flare_backgroundJob = $null
+        
+        # Clean up any stale packages from the previous job
+        $global:flare_resultCache.Remove('_background_package')
+    }
 
-    $job = Start-ThreadJob -Name "Flare Background Update $(Get-Date -Format 'HH:mm:ss.fff')" -ScriptBlock {
-        param($pieces, $results, $timestamp)
-        Write-Output "Updating background pieces: $pieces at timestamp $timestamp"
+    $global:flare_backgroundJob = Start-ThreadJob -Name "Flare Background Update $(Get-Date -Format 'HH:mm:ss.fff')" -ScriptBlock {
+        param($pieces, $results)
         . $using:PSScriptRoot/utils/invokeUtils.ps1
 
         $piecesResults = Get-PromptPieceResults -Pieces $pieces -PiecesPath $using:PSScriptRoot/pieces
 
-        # Create a results package with timestamp
+        # Create a simple results package
         $resultsPackage = @{
-            Timestamp = $timestamp
-            Results   = @{}
+            Results = @{}
         }
 
         foreach ($piece in $pieces) {
-            Write-Output "Piece: $piece, Result: $($piecesResults[$piece])"
             $resultsPackage.Results[$piece] = $piecesResults[$piece]
         }
 
-        # Store the entire package
-        $results["_package_$timestamp"] = $resultsPackage
-    } -ArgumentList $backgroundThreadPieces, $global:flare_resultCache, $timestamp
-
-    # Add the new job and its timestamp to our tracking collection
-    $job | Add-Member -NotePropertyName Timestamp -NotePropertyValue $timestamp
-    $global:flare_backgroundJobs.Add($job)
+        # Store the package with a simple key since we only have one job
+        $results['_background_package'] = $resultsPackage
+    } -ArgumentList $backgroundThreadPieces, $global:flare_resultCache
 }
 
 function Get-PromptTopLine {
@@ -209,8 +209,8 @@ function Get-PromptTopLine {
 
     $results = @{}
     foreach ($piece in $global:flare_resultCache.Keys) {
-        # Skip our package keys when building prompt data
-        if (-not $piece.StartsWith('_package_')) {
+        # Skip our package key when building prompt data
+        if ($piece -ne '_background_package') {
             $results[$piece] = $global:flare_resultCache[$piece]
         }
     }
@@ -229,75 +229,63 @@ function Get-PromptTopLine {
 }
 
 Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
-    # Check if there are any background jobs to process
-    if ($global:flare_backgroundJobs.Count -eq 0) {
+    # Check if there's a background job to process
+    if (-not $global:flare_backgroundJob) {
         return
     }
 
-    # Process completed jobs
-    $completedJobs = $global:flare_backgroundJobs | Where-Object { $_.State -ne 'Running' }
-    if ($completedJobs.Count -eq 0) {
+    # Only process if the job is completed
+    if ($global:flare_backgroundJob.State -eq 'Running') {
         return
     }
 
-    # Find the newest completed job
-    $newestCompletedJob = $completedJobs | Sort-Object -Property Timestamp -Descending | Select-Object -First 1
+    # Process the completed job
+    $hasChanges = $false
+    
+    try {
+        $null = Wait-Job -Job $global:flare_backgroundJob -ErrorAction SilentlyContinue
 
-    # Process the newest job first to get its results
-    if ($newestCompletedJob) {
-        $null = Wait-Job -Job $newestCompletedJob -ErrorAction SilentlyContinue
-
-        # Find and extract the package with the timestamp from the result cache
-        $packageKeys = $global:flare_resultCache.Keys | Where-Object { $_ -like '_package_*' }
-
-        # Find the newest package by timestamp
-        $newestPackage = $null
-        $newestPackageTimestamp = [DateTime]::MinValue
-
-        foreach ($key in $packageKeys) {
-            $package = $global:flare_resultCache[$key]
-            if ($package.Timestamp -gt $newestPackageTimestamp) {
-                $newestPackageTimestamp = $package.Timestamp
-                $newestPackage = $package
+        # Check if we have a background package
+        if ($global:flare_resultCache.ContainsKey('_background_package')) {
+            $package = $global:flare_resultCache['_background_package']
+            
+            # Apply results from the background job
+            foreach ($pieceName in $package.Results.Keys) {
+                $newResult = $package.Results[$pieceName]
+                
+                # Update if the result is different from what we have
+                if ($global:flare_resultCache[$pieceName] -ne $newResult) {
+                    $global:flare_resultCache[$pieceName] = $newResult
+                    $hasChanges = $true
+                }
             }
-        }
-
-        # Only apply results from the newest completed job
-        if ($newestPackage) {
-            # Apply the results to the main cache
-            foreach ($piece in $newestPackage.Results.Keys) {
-                $global:flare_resultCache[$piece] = $newestPackage.Results[$piece]
-            }
-
-            # Clean up packages that are no longer needed
-            foreach ($key in $packageKeys) {
-                $null = $global:flare_resultCache.TryRemove($key, [ref]$null)
-            }
+            
+            # Clean up the package
+            $global:flare_resultCache.Remove('_background_package')
         }
     }
-
-    # Wait for and clean up all completed jobs
-    foreach ($job in $completedJobs) {
-        $null = Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+    catch {
+        # If there's an error processing the job, just clean up
+        Write-Host "Error processing background job: $_" -ForegroundColor Red
     }
-
-    # Remove completed jobs from our tracking collection
-    $newBag = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
-    foreach ($job in ($global:flare_backgroundJobs | Where-Object { $_.State -eq 'Running' })) {
-        $newBag.Add($job)
+    finally {
+        # Clean up the completed job
+        Remove-Job -Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
+        $global:flare_backgroundJob = $null
     }
-    $global:flare_backgroundJobs = $newBag
 
     $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
     $comparisonPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
+    
     # Check if there are changes between caches for background pieces
-    $hasChanges = $false
-    foreach ($piece in $comparisonPieces) {
-        if ($global:flare_resultCache.ContainsKey($piece)) {
-            # If piece is in result cache but not in render cache or values differ
-            if ($global:flare_resultCache[$piece] -ne $global:flare_lastRenderCache[$piece]) {
-                $hasChanges = $true
-                break
+    if (-not $hasChanges) {
+        foreach ($piece in $comparisonPieces) {
+            if ($global:flare_resultCache.ContainsKey($piece)) {
+                # If piece is in result cache but not in render cache or values differ
+                if ($global:flare_resultCache[$piece] -ne $global:flare_lastRenderCache[$piece]) {
+                    $hasChanges = $true
+                    break
+                }
             }
         }
     }
@@ -325,13 +313,12 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
 # Register a cleanup event handler for when the module is removed
 $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
     Get-EventSubscriber | Unregister-Event
-    # Clean up all background jobs
-    foreach ($job in $global:flare_backgroundJobs) {
-        Stop-Job -Job $job -Force -ErrorAction SilentlyContinue
-        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+    # Clean up background job
+    if ($global:flare_backgroundJob) {
+        Stop-Job -Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
+        Remove-Job -Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
+        $global:flare_backgroundJob = $null
     }
-
-    $global:flare_backgroundJobs = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
 }
 
 function Prompt {
@@ -340,6 +327,13 @@ function Prompt {
             # Clear the last render cache when the directory changes
             $global:flare_lastRenderCache.Clear()
             $global:flare_resultCache.Clear()
+            
+            # Stop and clean up the background job from the previous directory
+            if ($global:flare_backgroundJob) {
+                Stop-Job -Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
+                Remove-Job -Job $global:flare_backgroundJob -Force -ErrorAction SilentlyContinue
+                $global:flare_backgroundJob = $null
+            }
         }
     }
 
