@@ -1,17 +1,28 @@
 . $PSScriptRoot/promptSymbols.ps1
 
-# Unified state management for the prompt system
+# Enhanced unified state management for the prompt system
 $global:flare_promptState = @{
-    ResultCache       = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new()
-    BackgroundJob     = $null
-    LastRenderHash    = $null
-    LastDirectory     = $null
-    IsRedrawing       = $false
-    LastRedrawTime    = [DateTime]::MinValue
-    AllPieces         = $null
-    BackgroundPieces  = $null
-    MainThreadPieces  = $null
-    StyleCache        = @{}
+    ResultCache         = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new()
+    BackgroundJob       = $null
+    LastRenderHash      = $null
+    LastDirectory       = $null
+    IsRedrawing         = $false
+    LastRedrawTime      = [DateTime]::MinValue
+    AllPieces           = $null
+    BackgroundPieces    = $null
+    MainThreadPieces    = $null
+    StyleCache          = @{}
+    PerformanceStats    = @{
+        TotalRenders    = 0
+        AverageTime     = 0
+        LastRenderTime  = 0
+    }
+    Configuration       = @{
+        EnablePerformanceMonitoring = $false
+        DebounceIntervalMs          = 50
+        ShowPerformanceMetrics      = $false
+    }
+    ActiveJobs          = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new()
 }
 
 # Items we can calculate on the main thread, but should also ignore when comparing changes from the background job
@@ -96,17 +107,53 @@ function Start-BackgroundJob {
     
     # Start single background job for all pieces
     $global:flare_promptState.BackgroundJob = Start-ThreadJob -Name "Flare-Background" -ScriptBlock {
-        param($backgroundPieces, $resultCache)
-        . $using:PSScriptRoot/utils/invokeUtils.ps1
+        param($backgroundPieces, $resultCache, $psScriptRoot)
+        . $psScriptRoot/utils/invokeUtils.ps1
         
         # Process all background pieces
         foreach ($pieceName in $backgroundPieces) {
-            $result = Invoke-FlarePiece -PieceName $pieceName -PiecesPath $using:PSScriptRoot/pieces
-            $resultCache[$pieceName] = $result
+            try {
+                $result = Invoke-FlarePiece -PieceName $pieceName -PiecesPath $psScriptRoot/pieces
+                $resultCache[$pieceName] = $result
+            }
+            catch {
+                # Silently fail for background jobs to avoid blocking
+                $resultCache[$pieceName] = ''
+            }
         }
         
         return 'background'
-    } -ArgumentList $global:flare_promptState.BackgroundPieces, $global:flare_promptState.ResultCache
+    } -ArgumentList $global:flare_promptState.BackgroundPieces, $global:flare_promptState.ResultCache, $PSScriptRoot
+}
+
+function Start-PieceJob {
+    param([string]$PieceName)
+    
+    # Clean up existing job if it exists
+    if ($global:flare_promptState.ActiveJobs.ContainsKey($PieceName)) {
+        $existingJob = $global:flare_promptState.ActiveJobs[$PieceName]
+        $existingJob | Stop-Job -Force -ErrorAction SilentlyContinue
+        $existingJob | Remove-Job -Force -ErrorAction SilentlyContinue
+        $null = $global:flare_promptState.ActiveJobs.TryRemove($PieceName, [ref]$null)
+    }
+    
+    # Start new job
+    $job = Start-ThreadJob -Name "Flare-$PieceName" -ScriptBlock {
+        param($pieceName, $resultCache, $psScriptRoot)
+        . $psScriptRoot/utils/invokeUtils.ps1
+        
+        try {
+            $result = Invoke-FlarePiece -PieceName $pieceName -PiecesPath $psScriptRoot/pieces
+            $resultCache[$pieceName] = $result
+            return $pieceName
+        }
+        catch {
+            $resultCache[$pieceName] = ''
+            return $pieceName
+        }
+    } -ArgumentList $PieceName, $global:flare_promptState.ResultCache, $PSScriptRoot
+    
+    $global:flare_promptState.ActiveJobs[$PieceName] = $job
 }
 
 function Update-BackgroundThreadPieces {
@@ -118,61 +165,30 @@ function Update-BackgroundThreadPieces {
         Start-BackgroundJob
     }
 }
-        $existingJob | Remove-Job -Force -ErrorAction SilentlyContinue
-        $null = $global:flare_promptState.ActiveJobs.TryRemove($PieceName, [ref]$null)
-    }
-    
-    # Start new job
-    $job = Start-ThreadJob -Name "Flare-$PieceName" -ScriptBlock {
-        param($pieceName, $resultCache)
-        . $using:PSScriptRoot/utils/invokeUtils.ps1
-        
-        $result = Invoke-FlarePiece -PieceName $pieceName -PiecesPath $using:PSScriptRoot/pieces
-        
-        # Direct update to cache - no packages needed
-        $resultCache[$pieceName] = $result
-        
-        # Return piece name so we know what was updated
-        return $pieceName
-    } -ArgumentList $PieceName, $global:flare_promptState.ResultCache
-    
-    $global:flare_promptState.ActiveJobs[$PieceName] = $job
-}
 
 function Request-PromptRedraw {
     $now = Get-Date
-    # Debounce rapid redraws (100ms minimum interval)
-    if (($now - $global:flare_promptState.LastRedrawTime).TotalMilliseconds -lt 100) {
+    # Enhanced debouncing with configurable interval
+    $debounceInterval = $global:flare_promptState.Configuration.DebounceIntervalMs
+    if (($now - $global:flare_promptState.LastRedrawTime).TotalMilliseconds -lt $debounceInterval) {
         return
     }
     
     $global:flare_promptState.LastRedrawTime = $now
     $global:flare_promptState.IsRedrawing = $true
-    [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
-    $global:flare_promptState.IsRedrawing = $false
+    
+    try {
+        [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
+    }
+    catch {
+        # Gracefully handle InvokePrompt failures
+        Write-Debug "Prompt redraw failed: $($_.Exception.Message)"
+    }
+    finally {
+        $global:flare_promptState.IsRedrawing = $false
+    }
 }
 
-function Get-StyleForIndex {
-    param([int]$Index, [int]$Count)
-    
-    $cacheKey = "$Index-$Count"
-    if ($global:flare_promptState.StyleCache.ContainsKey($cacheKey)) {
-        return $global:flare_promptState.StyleCache[$cacheKey]
-    }
-    
-    $backgroundIndex = ($backgroundStyles.Count - $Count) % $backgroundStyles.Count
-    $foregroundIndex = ($foregroundStyles.Count - $(if (($Count - 1) -gt 0) { $Count - 1 } else { $Count })) % $foregroundStyles.Count
-    $separatorIndex = ($foregroundStyles.Count - $(if (($Count - 1) -gt 0) { $Count - 1 } else { $Count })) % $foregroundStyles.Count
-    
-    $style = @{
-        Background     = $backgroundStyles.Values[$backgroundIndex]
-        Foreground     = $foregroundStyles['brightBlack']
-        SeparatorColor = $foregroundStyles.Values[$separatorIndex]
-    }
-    
-    $global:flare_promptState.StyleCache[$cacheKey] = $style
-    return $style
-}
 
 function Get-LeftPrompt {
     param(
@@ -186,9 +202,12 @@ function Get-LeftPrompt {
     foreach ($pieceName in $global:flare_leftPieces) {
         $pieceResult = $Parts[$pieceName]
         if ($pieceResult) {
-            $style = Get-StyleForIndex -Index $count -Count $count
-            $separator = "$($style.SeparatorColor)$(if (($count - 1) -gt 0) { "$($style.Background)$global:flare_promptSeparatorsLeft" } else { "$global:flare_promptTailLeft" })"
-            $left += "$separator$($style.Background)$($style.Foreground) "
+            # Use original color calculation logic from main branch
+            $background = $backgroundStyles.Values[($backgroundStyles.Count - $count) % $backgroundStyles.Count]
+            $foreground = $foregroundStyles['brightBlack']
+            $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - $(if (($count - 1) -gt 0) { $count - 1 } else { $count })) % $foregroundStyles.Count]
+            $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$background$global:flare_promptSeparatorsLeft" } else { "$global:flare_promptTailLeft" })"
+            $left += "$separator$background$foreground "
             
             $icon = Get-Variable -Name "flare_icons_$pieceName" -Scope Global -ValueOnly -ErrorAction SilentlyContinue
             if ($icon) {
@@ -214,18 +233,30 @@ function Get-RightPrompt {
     $right = ''
     $count = 1
     
+    # Add performance metrics if enabled
+    if ($global:flare_promptState.Configuration.ShowPerformanceMetrics) {
+        $perfMetrics = Get-PerformanceMetrics
+        if ($perfMetrics) {
+            $Parts['perf'] = $perfMetrics
+            $global:flare_rightPieces = @('perf') + $global:flare_rightPieces
+        }
+    }
+    
     foreach ($pieceName in $global:flare_rightPieces) {
         $pieceResult = $Parts[$pieceName]
         if ($pieceResult) {
-            $style = Get-StyleForIndex -Index $count -Count $count
-            $separator = "$($style.SeparatorColor)$(if (($count - 1) -gt 0) { "$($style.Background)$global:flare_promptSeparatorsRight" } else { "$($backgroundStyles['default'])$global:flare_promptTailRight" })"
+            # Use original color calculation logic from main branch
+            $background = $backgroundStyles.Values[($backgroundStyles.Count - $count) % $backgroundStyles.Count]
+            $foreground = $foregroundStyles['brightBlack']
+            $separatorColor = $foregroundStyles.Values[($foregroundStyles.Count - $(if (($count - 1) -gt 0) { $count - 1 } else { $count })) % $foregroundStyles.Count]
+            $separator = "$separatorColor$(if (($count - 1) -gt 0) { "$background$global:flare_promptSeparatorsRight" } else { "$($backgroundStyles['default'])$global:flare_promptTailRight" })"
             $right = "$pieceResult $separator$right"
             
             $icon = Get-Variable -Name "flare_icons_$pieceName" -Scope Global -ValueOnly -ErrorAction SilentlyContinue
             if ($icon) {
                 $right = "$icon $right"
             }
-            $right = "$($style.Background)$($style.Foreground) $right"
+            $right = "$background$foreground $right"
             $count += 1
         }
     }
@@ -234,6 +265,37 @@ function Get-RightPrompt {
     $right = "$($backgroundStyles['default'])$foreground$global:flare_promptSeparatorsRight$right"
 
     return $right
+}
+
+function Get-PerformanceMetrics {
+    if (-not $global:flare_promptState.Configuration.EnablePerformanceMonitoring) {
+        return $null
+    }
+    
+    $stats = $global:flare_promptState.PerformanceStats
+    if ($stats.TotalRenders -gt 0) {
+        return "$([math]::Round($stats.AverageTime, 1))ms"
+    }
+    return $null
+}
+
+function Update-PerformanceStats {
+    param([double]$RenderTimeMs)
+    
+    if (-not $global:flare_promptState.Configuration.EnablePerformanceMonitoring) {
+        return
+    }
+    
+    $stats = $global:flare_promptState.PerformanceStats
+    $stats.TotalRenders++
+    $stats.LastRenderTime = $RenderTimeMs
+    
+    # Calculate rolling average
+    if ($stats.TotalRenders -eq 1) {
+        $stats.AverageTime = $RenderTimeMs
+    } else {
+        $stats.AverageTime = ($stats.AverageTime * 0.9) + ($RenderTimeMs * 0.1)
+    }
 }
 
 function Get-PromptLine {
@@ -254,7 +316,10 @@ function Update-MainThreadPieces {
     Initialize-PieceCollections
     
     # Combine main thread pieces with fast fallbacks for uncached background pieces
-    $piecesToCalculate = [System.Collections.Generic.List[string]]::new($global:flare_promptState.MainThreadPieces)
+    $piecesToCalculate = [System.Collections.Generic.List[string]]::new()
+    foreach ($piece in $global:flare_promptState.MainThreadPieces) {
+        $piecesToCalculate.Add($piece)
+    }
     
     foreach ($piece in $global:flare_promptState.BackgroundPieces) {
         if (-not $global:flare_promptState.ResultCache.ContainsKey($piece)) {
@@ -280,69 +345,127 @@ function Update-MainThreadPieces {
     }
 }
 
-function Update-BackgroundThreadPieces {
-    Initialize-PieceCollections
-
-    foreach ($piece in $global:flare_promptState.BackgroundPieces) {
-        # Only start job if not already running
-        if (-not $global:flare_promptState.ActiveJobs.ContainsKey($piece) -or 
-            $global:flare_promptState.ActiveJobs[$piece].State -ne 'Running') {
-            Start-PieceJob -PieceName $piece
-        }
-    }
-}
-
 function Get-PromptTopLine {
     param(
         [bool]$DisableBackground = $false
     )
 
-    Update-MainThreadPieces
-    if (-not $DisableBackground) {
-        Update-BackgroundThreadPieces
-    }
-
-    # Convert ConcurrentDictionary to Hashtable for type compatibility
-    $results = @{}
-    foreach ($key in $global:flare_promptState.ResultCache.Keys) {
-        $results[$key] = $global:flare_promptState.ResultCache[$key]
-    }
-
-    $left = Get-LeftPrompt -Parts $results
-    $right = Get-RightPrompt -Parts $results
-
-    # Cache the regex-stripped lengths to avoid recalculation
-    $leftLength = ($left -replace $escapeRegex).Length
-    $rightLength = ($right -replace $escapeRegex).Length
-    $totalLength = $leftLength + $rightLength
+    $renderStart = [System.Diagnostics.Stopwatch]::StartNew()
     
-    # Calculate spacing
-    $spaces = $Host.UI.RawUI.WindowSize.Width - $totalLength
-    if ($spaces -lt 0) { $spaces = 0 }
+    try {
+        Update-MainThreadPieces
+        if (-not $DisableBackground) {
+            Update-BackgroundThreadPieces
+        }
 
-    "$left$defaultStyle$(' ' * $spaces)$right"
+        # Convert ConcurrentDictionary to Hashtable for type compatibility
+        $results = @{}
+        foreach ($key in $global:flare_promptState.ResultCache.Keys) {
+            $results[$key] = $global:flare_promptState.ResultCache[$key]
+        }
+
+        $left = Get-LeftPrompt -Parts $results
+        $right = Get-RightPrompt -Parts $results
+
+        # Optimized length calculation with caching
+        $leftLength = ($left -replace $escapeRegex).Length
+        $rightLength = ($right -replace $escapeRegex).Length
+        $totalLength = $leftLength + $rightLength
+        
+        # Calculate spacing with proper terminal width detection
+        $terminalWidth = $Host.UI.RawUI.WindowSize.Width
+        if ($terminalWidth -le 0) { $terminalWidth = 80 } # Fallback for environments where width isn't available
+        
+        $spaces = [Math]::Max(0, $terminalWidth - $totalLength)
+
+        return "$left$defaultStyle$(' ' * $spaces)$right"
+    }
+    finally {
+        $renderStart.Stop()
+        Update-PerformanceStats -RenderTimeMs $renderStart.Elapsed.TotalMilliseconds
+    }
 }
 
+# Enhanced event handling with better error management
 Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
-    # Early exit if no background job
-    if (-not $global:flare_promptState.BackgroundJob) {
-        return
-    }
-
-    # Check if background job is completed
-    if ($global:flare_promptState.BackgroundJob.State -ne 'Running') {
-        # Clean up completed background job
-        $null = Wait-Job -Job $global:flare_promptState.BackgroundJob -ErrorAction SilentlyContinue
-        $null = Receive-Job -Job $global:flare_promptState.BackgroundJob -ErrorAction SilentlyContinue
-        Remove-Job -Job $global:flare_promptState.BackgroundJob -Force -ErrorAction SilentlyContinue
-        $global:flare_promptState.BackgroundJob = $null
-
-        # Check if we need to redraw based on hash comparison
-        $currentHash = Get-PromptStateHash -ResultCache $global:flare_promptState.ResultCache
-        if ($currentHash -ne $global:flare_promptState.LastRenderHash) {
-            $global:flare_promptState.LastRenderHash = $currentHash
-            Request-PromptRedraw
+    try {
+        # Early exit if no background job
+        if (-not $global:flare_promptState.BackgroundJob) {
+            return
         }
+
+        # Check if background job is completed
+        if ($global:flare_promptState.BackgroundJob.State -ne 'Running') {
+            # Clean up completed background job
+            $null = Wait-Job -Job $global:flare_promptState.BackgroundJob -ErrorAction SilentlyContinue
+            $null = Receive-Job -Job $global:flare_promptState.BackgroundJob -ErrorAction SilentlyContinue
+            Remove-Job -Job $global:flare_promptState.BackgroundJob -Force -ErrorAction SilentlyContinue
+            $global:flare_promptState.BackgroundJob = $null
+
+            # Check if we need to redraw based on hash comparison
+            $currentHash = Get-PromptStateHash -ResultCache $global:flare_promptState.ResultCache
+            if ($currentHash -ne $global:flare_promptState.LastRenderHash) {
+                $global:flare_promptState.LastRenderHash = $currentHash
+                Request-PromptRedraw
+            }
+        }
+        
+        # Clean up completed individual jobs
+        $completedJobs = @()
+        foreach ($kvp in $global:flare_promptState.ActiveJobs.GetEnumerator()) {
+            if ($kvp.Value.State -ne 'Running') {
+                $completedJobs += $kvp.Key
+                $null = Wait-Job -Job $kvp.Value -ErrorAction SilentlyContinue
+                $null = Receive-Job -Job $kvp.Value -ErrorAction SilentlyContinue
+                Remove-Job -Job $kvp.Value -Force -ErrorAction SilentlyContinue
+            }
+        }
+        
+        foreach ($jobName in $completedJobs) {
+            $null = $global:flare_promptState.ActiveJobs.TryRemove($jobName, [ref]$null)
+        }
+    }
+    catch {
+        # Silently handle errors to prevent disrupting the user experience
+        Write-Debug "Flare OnIdle event error: $($_.Exception.Message)"
+    }
+}
+
+# Configuration management functions
+function Set-FlareConfiguration {
+    param(
+        [hashtable]$Configuration
+    )
+    
+    foreach ($key in $Configuration.Keys) {
+        if ($global:flare_promptState.Configuration.ContainsKey($key)) {
+            $global:flare_promptState.Configuration[$key] = $Configuration[$key]
+        }
+    }
+    
+    # Clear caches when configuration changes
+    $global:flare_promptState.StyleCache.Clear()
+    $global:flare_promptState.ResultCache.Clear()
+}
+
+function Get-FlareConfiguration {
+    return $global:flare_promptState.Configuration.Clone()
+}
+
+function Reset-FlareCache {
+    $global:flare_promptState.ResultCache.Clear()
+    $global:flare_promptState.StyleCache.Clear()
+    $global:flare_promptState.LastRenderHash = $null
+}
+
+function Get-FlareStatistics {
+    return @{
+        TotalRenders = $global:flare_promptState.PerformanceStats.TotalRenders
+        AverageRenderTime = $global:flare_promptState.PerformanceStats.AverageTime
+        LastRenderTime = $global:flare_promptState.PerformanceStats.LastRenderTime
+        CachedItems = $global:flare_promptState.ResultCache.Count
+        ActiveBackgroundJobs = if ($global:flare_promptState.BackgroundJob) { 1 } else { 0 }
+        ActivePieceJobs = $global:flare_promptState.ActiveJobs.Count
     }
 }
 
@@ -350,42 +473,82 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
 #     New-Event -SourceIdentifier Flare.Redraw -Sender $Sender
 # }
 
-# Register a cleanup event handler for when the module is removed
+# Enhanced cleanup with comprehensive job management
 $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
-    Get-EventSubscriber | Where-Object { $_.SourceIdentifier -eq 'PowerShell.OnIdle' } | Unregister-Event
-    # Clean up background job if running
-    if ($global:flare_promptState.BackgroundJob) {
-        $global:flare_promptState.BackgroundJob | Stop-Job -Force -ErrorAction SilentlyContinue
-        $global:flare_promptState.BackgroundJob | Remove-Job -Force -ErrorAction SilentlyContinue
-        $global:flare_promptState.BackgroundJob = $null
+    try {
+        # Unregister events
+        Get-EventSubscriber | Where-Object { $_.SourceIdentifier -eq 'PowerShell.OnIdle' } | Unregister-Event -Force -ErrorAction SilentlyContinue
+        
+        # Clean up background job if running
+        if ($global:flare_promptState.BackgroundJob) {
+            $global:flare_promptState.BackgroundJob | Stop-Job -Force -ErrorAction SilentlyContinue
+            $global:flare_promptState.BackgroundJob | Remove-Job -Force -ErrorAction SilentlyContinue
+            $global:flare_promptState.BackgroundJob = $null
+        }
+        
+        # Clean up all active piece jobs
+        foreach ($job in $global:flare_promptState.ActiveJobs.Values) {
+            $job | Stop-Job -Force -ErrorAction SilentlyContinue
+            $job | Remove-Job -Force -ErrorAction SilentlyContinue
+        }
+        $global:flare_promptState.ActiveJobs.Clear()
+        
+        # Clear all caches
+        $global:flare_promptState.ResultCache.Clear()
+        $global:flare_promptState.StyleCache.Clear()
+    }
+    catch {
+        # Silently handle cleanup errors
+        Write-Debug "Flare cleanup error: $($_.Exception.Message)"
     }
 }
 
 function Prompt {
-    # Check for directory changes and clear cache if needed
-    if ($global:flare_promptState.LastDirectory -and 
-        $PWD.Path -ne $global:flare_promptState.LastDirectory.Path) {
-        $global:flare_promptState.ResultCache.Clear()
-        $global:flare_promptState.LastRenderHash = $null
-        $global:flare_promptState.StyleCache.Clear()
-        # Reset piece collections to force recalculation
-        $global:flare_promptState.AllPieces = $null
-        $global:flare_promptState.BackgroundPieces = $null
-        $global:flare_promptState.MainThreadPieces = $null
+    try {
+        # Performance timing
+        $promptStart = [System.Diagnostics.Stopwatch]::StartNew()
+        
+        # Check for directory changes and clear cache if needed
+        if ($global:flare_promptState.LastDirectory -and 
+            $PWD.Path -ne $global:flare_promptState.LastDirectory.Path) {
+            Reset-FlareCache
+            # Reset piece collections to force recalculation
+            $global:flare_promptState.AllPieces = $null
+            $global:flare_promptState.BackgroundPieces = $null
+            $global:flare_promptState.MainThreadPieces = $null
+        }
+
+        $global:flare_promptState.LastDirectory = $PWD
+
+        $topLine = Get-PromptTopLine -DisableBackground $global:flare_promptState.IsRedrawing
+        $line = Get-PromptLine
+
+        Set-PSReadLineOption -ExtraPromptLineCount 1
+
+        $promptStart.Stop()
+        
+        # Update performance stats for the full prompt
+        if ($global:flare_promptState.Configuration.EnablePerformanceMonitoring) {
+            Update-PerformanceStats -RenderTimeMs $promptStart.Elapsed.TotalMilliseconds
+        }
+
+        return "`r$topLine`n$line "
     }
-
-    $global:flare_promptState.LastDirectory = $PWD
-
-    $topLine = Get-PromptTopLine -DisableBackground $global:flare_promptState.IsRedrawing
-    $line = Get-PromptLine
-
-    Set-PSReadLineOption -ExtraPromptLineCount 1
-
-    "`r$topLine`n$line "
+    catch {
+        # Fallback prompt in case of errors
+        Write-Debug "Flare prompt error: $($_.Exception.Message)"
+        return "PS $($PWD.Path -replace [regex]::Escape($HOME), '~')> "
+    }
 }
 
-# Add module exports
-Export-ModuleMember -Function @('Prompt')
+# Enhanced module exports with configuration functions
+Export-ModuleMember -Function @(
+    'Prompt'
+    'Set-FlareConfiguration'
+    'Get-FlareConfiguration' 
+    'Reset-FlareCache'
+    'Get-FlareStatistics'
+)
 
 # Use Set-PSReadLineKeyHandler to clear the prompt and rewrite the user's input when the user submits a command
 Set-PSReadLineKeyHandler -Key Enter -BriefDescription 'Clear prompt and rewrite input on Enter' -ScriptBlock {
