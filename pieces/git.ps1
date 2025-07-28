@@ -51,10 +51,10 @@ function flare_git {
             $totalSteps = (Get-Content "$gitDir/rebase-merge/end" -Raw -ErrorAction SilentlyContinue).Trim()
         }
         if (Test-Path "$gitDir/rebase-merge/interactive") {
-            $operation = "rebase-i"
+            $operation = 'rebase-i'
         }
         else {
-            $operation = "rebase-m"
+            $operation = 'rebase-m'
         }
     }
     elseif (Test-Path "$gitDir/rebase-apply") {
@@ -63,26 +63,26 @@ function flare_git {
             $totalSteps = (Get-Content "$gitDir/rebase-apply/last" -Raw -ErrorAction SilentlyContinue).Trim()
         }
         if (Test-Path "$gitDir/rebase-apply/rebasing") {
-            $operation = "rebase"
+            $operation = 'rebase'
         }
         elseif (Test-Path "$gitDir/rebase-apply/applying") {
-            $operation = "am"
+            $operation = 'am'
         }
         else {
-            $operation = "am/rebase"
+            $operation = 'am/rebase'
         }
     }
     elseif (Test-Path "$gitDir/MERGE_HEAD") {
-        $operation = "merge"
+        $operation = 'merge'
     }
     elseif (Test-Path "$gitDir/CHERRY_PICK_HEAD") {
-        $operation = "cherry-pick"
+        $operation = 'cherry-pick'
     }
     elseif (Test-Path "$gitDir/REVERT_HEAD") {
-        $operation = "revert"
+        $operation = 'revert'
     }
     elseif (Test-Path "$gitDir/BISECT_LOG") {
-        $operation = "bisect"
+        $operation = 'bisect'
     }
 
     # Get git status and counts - use individual commands for reliability
@@ -129,18 +129,18 @@ function flare_git {
         }
     }
     
-    # Add status indicators with improved symbols
+    # Add status indicators (matching tide order: behind, ahead, stash, conflicted, staged, dirty, untracked)
     $statusParts = @()
     if ($behind -gt 0) { $statusParts += "⇣$behind" }
     if ($ahead -gt 0) { $statusParts += "⇡$ahead" }
-    if ($stash -gt 0) { $statusParts += "⚑$stash" }
-    if ($conflicted -gt 0) { $statusParts += "✖$conflicted" }
-    if ($staged -gt 0) { $statusParts += "●$staged" }
-    if ($dirty -gt 0) { $statusParts += "✚$dirty" }
-    if ($untracked -gt 0) { $statusParts += "…$untracked" }
+    if ($stash -gt 0) { $statusParts += "*$stash" }
+    if ($conflicted -gt 0) { $statusParts += "~$conflicted" }
+    if ($staged -gt 0) { $statusParts += "+$staged" }
+    if ($dirty -gt 0) { $statusParts += "!$dirty" }
+    if ($untracked -gt 0) { $statusParts += "?$untracked" }
     
     if ($statusParts.Count -gt 0) {
-        $output += " " + ($statusParts -join " ")
+        $output += ' ' + ($statusParts -join ' ')
     }
     
     return $output
