@@ -222,10 +222,12 @@ function Get-PromptTopLine {
     # Get the window width and subtract the current cursor position
     $spaces = $Host.UI.RawUI.WindowSize.Width - ($($left -replace $escapeRegex).Length + $($right -replace $escapeRegex).Length)
 
-    # Ensure spaces is not negative
-    if ($spaces -lt 0) { $spaces = 0 }
-
-    "$left$defaultStyle$(' ' * $spaces)$right"
+    if ($spaces -lt 0) { 
+      # Not enough space to also have right prompt
+      "$left"
+    } else {
+      "$left$defaultStyle$(' ' * $spaces)$right"
+    }
 }
 
 Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
