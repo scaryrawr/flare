@@ -167,20 +167,36 @@ function Update-BackgroundThreadPieces {
     # Find the intersection of all prompt pieces and main thread items
     $backgroundThreadPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
 
+    # Capture the working directory at the time the job is created.
+    # Background jobs run in another runspace and may not inherit the caller's location,
+    # which can cause pieces like `git` to be computed for the wrong directory.
+    $workingDirectory = $PWD.Path
+
     # Generate a timestamp for this job
     $timestamp = Get-Date
 
     $job = Start-ThreadJob -Name "Flare Background Update $(Get-Date -Format 'HH:mm:ss.fff')" -ScriptBlock {
-        param($pieces, $results, $timestamp)
+        param($pieces, $results, $timestamp, $workingDirectory)
         Write-Output "Updating background pieces: $pieces at timestamp $timestamp"
         . $using:PSScriptRoot/utils/invokeUtils.ps1
+
+        # Ensure piece evaluation happens in the directory that created the job.
+        try {
+            if ($workingDirectory) {
+                Set-Location -LiteralPath $workingDirectory -ErrorAction Stop
+            }
+        }
+        catch {
+            # If we can't cd (directory removed, permissions, etc.), continue. Pieces should fail closed.
+        }
 
         $piecesResults = Get-PromptPieceResults -Pieces $pieces -PiecesPath $using:PSScriptRoot/pieces
 
         # Create a results package with timestamp
         $resultsPackage = @{
-            Timestamp = $timestamp
-            Results   = @{}
+            Timestamp        = $timestamp
+            WorkingDirectory = $workingDirectory
+            Results          = @{}
         }
 
         foreach ($piece in $pieces) {
@@ -190,7 +206,7 @@ function Update-BackgroundThreadPieces {
 
         # Store the entire package
         $results["_package_$timestamp"] = $resultsPackage
-    } -ArgumentList $backgroundThreadPieces, $global:flare_resultCache, $timestamp
+    } -ArgumentList $backgroundThreadPieces, $global:flare_resultCache, $timestamp, $workingDirectory
 
     # Add the new job and its timestamp to our tracking collection
     $job | Add-Member -NotePropertyName Timestamp -NotePropertyValue $timestamp
@@ -223,10 +239,11 @@ function Get-PromptTopLine {
     $spaces = $Host.UI.RawUI.WindowSize.Width - ($($left -replace $escapeRegex).Length + $($right -replace $escapeRegex).Length)
 
     if ($spaces -lt 0) { 
-      # Not enough space to also have right prompt
-      "$left"
-    } else {
-      "$left$defaultStyle$(' ' * $spaces)$right"
+        # Not enough space to also have right prompt
+        "$left"
+    }
+    else {
+        "$left$defaultStyle$(' ' * $spaces)$right"
     }
 }
 
@@ -252,12 +269,24 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
         # Find and extract the package with the timestamp from the result cache
         $packageKeys = $global:flare_resultCache.Keys | Where-Object { $_ -like '_package_*' }
 
-        # Find the newest package by timestamp
+        # Find the newest package for the CURRENT working directory by timestamp.
+        # Without this, a job created in a previous directory can complete later and
+        # overwrite the cache, reintroducing stale data (notably the `git` piece).
         $newestPackage = $null
         $newestPackageTimestamp = [DateTime]::MinValue
 
+        $currentWorkingDirectory = (Get-Location).Path
+
         foreach ($key in $packageKeys) {
             $package = $global:flare_resultCache[$key]
+            if ($null -eq $package) {
+                continue
+            }
+
+            if ($package.WorkingDirectory -ne $currentWorkingDirectory) {
+                continue
+            }
+
             if ($package.Timestamp -gt $newestPackageTimestamp) {
                 $newestPackageTimestamp = $package.Timestamp
                 $newestPackage = $package
@@ -271,7 +300,14 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
                 $global:flare_resultCache[$piece] = $newestPackage.Results[$piece]
             }
 
-            # Clean up packages that are no longer needed
+            # Clean up packages that are no longer needed (including other directories).
+            foreach ($key in $packageKeys) {
+                $null = $global:flare_resultCache.TryRemove($key, [ref]$null)
+            }
+        }
+        else {
+            # No applicable package for the current directory; still clean up packages so
+            # completed jobs from other directories cannot apply later.
             foreach ($key in $packageKeys) {
                 $null = $global:flare_resultCache.TryRemove($key, [ref]$null)
             }
@@ -342,6 +378,20 @@ function Prompt {
             # Clear the last render cache when the directory changes
             $global:flare_lastRenderCache.Clear()
             $global:flare_resultCache.Clear()
+
+            # Cancel any in-flight background jobs created for the previous directory.
+            # If we don't, a slower job can complete after cd and OnIdle can reapply
+            # stale results for the old directory.
+            foreach ($job in $global:flare_backgroundJobs) {
+                try {
+                    Stop-Job -Job $job -Force -ErrorAction SilentlyContinue
+                    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+                }
+                catch {
+                    # Ignore failures; jobs may have already completed/been removed.
+                }
+            }
+            $global:flare_backgroundJobs = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
         }
     }
 
