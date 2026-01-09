@@ -224,10 +224,14 @@ function Get-PromptTopLine {
     }
 
     $results = @{}
-    foreach ($piece in $global:flare_resultCache.Keys) {
+    # Take a snapshot of keys to avoid enumeration issues with concurrent modifications
+    foreach ($piece in @($global:flare_resultCache.Keys)) {
         # Skip our package keys when building prompt data
         if (-not $piece.StartsWith('_package_')) {
-            $results[$piece] = $global:flare_resultCache[$piece]
+            $value = $null
+            if ($global:flare_resultCache.TryGetValue($piece, [ref]$value)) {
+                $results[$piece] = $value
+            }
         }
     }
 
@@ -267,7 +271,8 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
         $null = Wait-Job -Job $newestCompletedJob -ErrorAction SilentlyContinue
 
         # Find and extract the package with the timestamp from the result cache
-        $packageKeys = $global:flare_resultCache.Keys | Where-Object { $_ -like '_package_*' }
+        # Take a snapshot of keys to avoid enumeration issues with concurrent modifications
+        $packageKeys = @($global:flare_resultCache.Keys) | Where-Object { $_ -like '_package_*' }
 
         # Find the newest package for the CURRENT working directory by timestamp.
         # Without this, a job created in a previous directory can complete later and
@@ -278,7 +283,10 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
         $currentWorkingDirectory = (Get-Location).Path
 
         foreach ($key in $packageKeys) {
-            $package = $global:flare_resultCache[$key]
+            $package = $null
+            if (-not $global:flare_resultCache.TryGetValue($key, [ref]$package)) {
+                continue
+            }
             if ($null -eq $package) {
                 continue
             }
@@ -331,9 +339,11 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
     # Check if there are changes between caches for background pieces
     $hasChanges = $false
     foreach ($piece in $comparisonPieces) {
-        if ($global:flare_resultCache.ContainsKey($piece)) {
+        $cachedValue = $null
+        # Use TryGetValue for atomic check-and-read to avoid race conditions
+        if ($global:flare_resultCache.TryGetValue($piece, [ref]$cachedValue)) {
             # If piece is in result cache but not in render cache or values differ
-            if ($global:flare_resultCache[$piece] -ne $global:flare_lastRenderCache[$piece]) {
+            if ($cachedValue -ne $global:flare_lastRenderCache[$piece]) {
                 $hasChanges = $true
                 break
             }
@@ -344,14 +354,20 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
     if ($hasChanges) {
         # Update the lastRenderCache with current values
         foreach ($piece in $comparisonPieces) {
-            if ($global:flare_resultCache.ContainsKey($piece)) {
-                $global:flare_lastRenderCache[$piece] = $global:flare_resultCache[$piece]
+            $cachedValue = $null
+            if ($global:flare_resultCache.TryGetValue($piece, [ref]$cachedValue)) {
+                $global:flare_lastRenderCache[$piece] = $cachedValue
             }
         }
 
-        # Redraw the prompt
+        # Redraw the prompt - wrap in try-catch to prevent blocking if PSReadLine is in an inconsistent state
         $global:flare_redrawing = $true
-        [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
+        try {
+            [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
+        }
+        catch {
+            # Silently ignore - prompt will be redrawn on next command anyway
+        }
         $global:flare_redrawing = $false
     }
 }
