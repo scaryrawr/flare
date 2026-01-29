@@ -24,10 +24,75 @@
 ## Customization knobs
 - Edit `promptSymbols.ps1` for separators/heads/tails, icons (`$global:flare_icons_<piece>`), date format (`$global:flare_dateFormat`), and piece ordering.
 
-## Dev workflows (what CI runs)
-- CI: `.github/workflows/validation.yml` imports `flare.psm1`, runs `testPiecesTiming.ps1`, then `testGitStates.ps1` (Zig is installed in CI).
-- Run locally (pwsh, repo root):
-  - `./testPiecesTiming.ps1` (creates a temp git repo + fixture files like `package.json`, `go.mod`, `Cargo.toml`, `build.zig`, etc. to exercise pieces)
-  - `./testGitStates.ps1` (covers merge/rebase/cherry-pick + ahead/behind + status counts for `pieces/git.ps1`)
-  - `./debugPieceTiming.ps1 -WorkingDirectory <path> -Iterations 50` (timing in a real repo)
-  - `./testPromptTiming.ps1` (end-to-end `Prompt` timing)
+## Tech Stack
+- PowerShell 7+ (cross-platform)
+- No external dependencies required (uses built-in PowerShell modules)
+- Relies on `PSReadLine` module for prompt handling
+- Uses `Start-ThreadJob` for background execution
+
+## Coding Conventions
+- Use PowerShell approved verbs for function names (e.g., `Get-`, `Set-`, `Invoke-`)
+- Prefix all piece functions with `flare_` (e.g., `flare_git`, `flare_node`)
+- Prefix all global variables with `$global:flare_` (e.g., `$global:flare_icons_git`)
+- Use PowerShell null-coalescing operator `??=` for default values
+- Avoid `Write-Host` in pieces; return strings instead
+- Check tool availability with `Get-Command` before invoking external tools
+- Use ANSI escape sequences for colors: `` `e[<code>m`` format
+
+## File Structure
+- `flare.psm1` - Main module file, entry point for the prompt
+- `promptSymbols.ps1` - Configuration for symbols, icons, separators, and piece ordering
+- `pieces/*.ps1` - Individual prompt segment implementations
+- `utils/*.ps1` - Helper utilities for invoking pieces and managing state
+- Test scripts at root: `test*.ps1`, `debug*.ps1`
+
+### Do Not Modify
+- ANSI color codes in `$foregroundStyles` and `$backgroundStyles` unless fixing a bug
+- The core prompt rendering logic in `Prompt` function unless fixing a bug
+- PSReadLine handler logic unless fixing a bug
+
+## Testing & Validation
+All commands should be run from repository root with PowerShell 7+:
+
+### Import and Load Module
+```pwsh
+Import-Module ./flare.psm1
+```
+
+### Local Testing Commands
+- `./testPiecesTiming.ps1` - Creates a temp git repo + fixture files like `package.json`, `go.mod`, `Cargo.toml`, `build.zig`, etc. to exercise all pieces
+- `./testGitStates.ps1` - Covers merge/rebase/cherry-pick + ahead/behind + status counts for `pieces/git.ps1`
+- `./debugPieceTiming.ps1 -WorkingDirectory <path> -Iterations 50` - Timing in a real repo
+- `./testPromptTiming.ps1` - End-to-end `Prompt` timing
+
+### CI Workflow
+- Workflow: `.github/workflows/validation.yml`
+- Runs on Windows, macOS, and Ubuntu (all platforms must pass)
+- Installs Zig for testing the Zig piece
+- Imports `flare.psm1`, runs `testPiecesTiming.ps1`, then `testGitStates.ps1`
+
+## Common Patterns
+
+### Adding a New Piece
+1. Create `pieces/<name>.ps1` with `function flare_<name> { ... }`
+2. Add icon in `promptSymbols.ps1`: `$global:flare_icons_<name> ??= '󰊠'`
+3. Add piece name to `$global:flare_leftPieces` or `$global:flare_rightPieces`
+4. Return empty string `''` when piece should be hidden
+5. Check tool availability: `if (-not (Get-Command <tool> -ErrorAction SilentlyContinue)) { return '' }`
+6. For slow operations, create `pieces/<name>_fast.ps1` with quick fallback
+
+### Example Piece Structure
+```pwsh
+function flare_example {
+    # Check if tool is available
+    if (-not (Get-Command example-tool -ErrorAction SilentlyContinue)) {
+        return ''
+    }
+    
+    # Get information
+    $info = example-tool --version
+    
+    # Return formatted string with icon
+    return "$global:flare_icons_example $info"
+}
+```
