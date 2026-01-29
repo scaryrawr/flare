@@ -51,7 +51,7 @@
 - The core prompt rendering logic in `Prompt` function unless fixing a bug
 - PSReadLine handler logic unless fixing a bug
 
-## Testing & Validation Commands
+## Testing & Validation
 All commands should be run from repository root with PowerShell 7+:
 
 ### Import and Load Module
@@ -59,31 +59,17 @@ All commands should be run from repository root with PowerShell 7+:
 Import-Module ./flare.psm1
 ```
 
-### Run All Tests
-```pwsh
-./testPiecesTiming.ps1
-./testGitStates.ps1
-./testPromptTiming.ps1
-```
+### Local Testing Commands
+- `./testPiecesTiming.ps1` - Creates a temp git repo + fixture files like `package.json`, `go.mod`, `Cargo.toml`, `build.zig`, etc. to exercise all pieces
+- `./testGitStates.ps1` - Covers merge/rebase/cherry-pick + ahead/behind + status counts for `pieces/git.ps1`
+- `./debugPieceTiming.ps1 -WorkingDirectory <path> -Iterations 50` - Timing in a real repo
+- `./testPromptTiming.ps1` - End-to-end `Prompt` timing
 
-### Debug/Timing Tests
-```pwsh
-./debugPieceTiming.ps1 -WorkingDirectory <path> -Iterations 50
-```
-
-### CI Validation
-- CI runs on Windows, macOS, and Ubuntu
+### CI Workflow
 - Workflow: `.github/workflows/validation.yml`
+- Runs on Windows, macOS, and Ubuntu (all platforms must pass)
 - Installs Zig for testing the Zig piece
-- All tests must pass on all platforms
-
-## Dev workflows (what CI runs)
-- CI: `.github/workflows/validation.yml` imports `flare.psm1`, runs `testPiecesTiming.ps1`, then `testGitStates.ps1` (Zig is installed in CI).
-- Run locally (pwsh, repo root):
-  - `./testPiecesTiming.ps1` (creates a temp git repo + fixture files like `package.json`, `go.mod`, `Cargo.toml`, `build.zig`, etc. to exercise pieces)
-  - `./testGitStates.ps1` (covers merge/rebase/cherry-pick + ahead/behind + status counts for `pieces/git.ps1`)
-  - `./debugPieceTiming.ps1 -WorkingDirectory <path> -Iterations 50` (timing in a real repo)
-  - `./testPromptTiming.ps1` (end-to-end `Prompt` timing)
+- Imports `flare.psm1`, runs `testPiecesTiming.ps1`, then `testGitStates.ps1`
 
 ## Common Patterns
 
