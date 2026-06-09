@@ -134,6 +134,13 @@ catch {
     exit 1
 }
 
+Write-Host 'Testing background job state handling...' -ForegroundColor Cyan
+& "$PSScriptRoot/testBackgroundJobs.ps1"
+if (-not $?) {
+    exit 1
+}
+Write-Host ''
+
 Write-Host 'Testing individual pieces performance in controlled environment...'
 Write-Host "Running $Iterations iterations per piece..."
 Write-Host ''

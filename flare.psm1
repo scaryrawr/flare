@@ -251,14 +251,28 @@ function Get-PromptTopLine {
     }
 }
 
+function Test-FlareBackgroundJobTerminalState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Job
+    )
+
+    $Job.State -in @(
+        [System.Management.Automation.JobState]::Completed,
+        [System.Management.Automation.JobState]::Failed,
+        [System.Management.Automation.JobState]::Stopped
+    )
+}
+
 Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
     # Check if there are any background jobs to process
     if ($global:flare_backgroundJobs.Count -eq 0) {
         return
     }
 
-    # Process completed jobs
-    $completedJobs = $global:flare_backgroundJobs | Where-Object { $_.State -ne 'Running' }
+    # Only terminal jobs are safe to wait on. Queued jobs can sit in NotStarted,
+    # and Wait-Job on those would block the interactive runspace.
+    $completedJobs = $global:flare_backgroundJobs | Where-Object { Test-FlareBackgroundJobTerminalState $_ }
     if ($completedJobs.Count -eq 0) {
         return
     }
@@ -329,7 +343,7 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
 
     # Remove completed jobs from our tracking collection
     $newBag = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
-    foreach ($job in ($global:flare_backgroundJobs | Where-Object { $_.State -eq 'Running' })) {
+    foreach ($job in ($global:flare_backgroundJobs | Where-Object { -not (Test-FlareBackgroundJobTerminalState $_) })) {
         $newBag.Add($job)
     }
     $global:flare_backgroundJobs = $newBag
