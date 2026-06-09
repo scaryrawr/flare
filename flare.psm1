@@ -257,7 +257,11 @@ function Test-FlareBackgroundJobTerminalState {
         [object]$Job
     )
 
-    $Job.State.ToString() -in @('Completed', 'Failed', 'Stopped')
+    $Job.State -in @(
+        [System.Management.Automation.JobState]::Completed,
+        [System.Management.Automation.JobState]::Failed,
+        [System.Management.Automation.JobState]::Stopped
+    )
 }
 
 Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
