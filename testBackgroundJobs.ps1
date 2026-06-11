@@ -38,7 +38,6 @@ foreach ($testCase in $testCases) {
     }
 }
 
-$originalLocation = Get-Location
 $originalLeftPieces = @($global:flare_leftPieces)
 $originalRightPieces = @($global:flare_rightPieces)
 $originalPath = $env:PATH
@@ -90,7 +89,7 @@ try {
     }
 }
 finally {
-    Set-Location $originalLocation
+    Pop-Location -ErrorAction SilentlyContinue
     $env:PATH = $originalPath
     $global:flare_leftPieces = $originalLeftPieces
     $global:flare_rightPieces = $originalRightPieces

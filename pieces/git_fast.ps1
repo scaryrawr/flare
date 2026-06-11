@@ -221,6 +221,7 @@ function Get-GitIndexEntries {
 
       $mtime = Read-GitIndexUInt32 $bytes ($offset + 8)
       $size = Read-GitIndexUInt32 $bytes ($offset + 36)
+      $objectId = [System.BitConverter]::ToString($bytes, $offset + 40, 20).Replace('-', '').ToLowerInvariant()
       $flags = Read-GitIndexUInt16 $bytes ($offset + 60)
       $pathLength = $flags -band 0x0fff
       $pathStart = $offset + 62
@@ -248,8 +249,9 @@ function Get-GitIndexEntries {
 
       $path = [System.Text.Encoding]::UTF8.GetString($bytes, $pathStart, $pathEnd - $pathStart)
       $entries[$path] = @{
-        MTime = $mtime
-        Size  = $size
+        MTime = [uint64]$mtime
+        Oid   = $objectId
+        Size  = [uint64]$size
       }
 
       while (($pathEnd -lt $bytes.Length) -and ($bytes[$pathEnd] -ne 0)) {
@@ -262,7 +264,9 @@ function Get-GitIndexEntries {
       }
     }
   }
-  catch { }
+  catch [System.IO.IOException], [System.UnauthorizedAccessException], [System.Security.SecurityException] {
+    return @{}
+  }
 
   return $entries
 }
@@ -273,8 +277,120 @@ function ConvertTo-GitRelativePath {
     [string]$Path
   )
 
-  $relativePath = [System.IO.Path]::GetRelativePath($RepoPath, $Path)
+  $repoFullPath = [System.IO.Path]::GetFullPath($RepoPath).TrimEnd(@(
+    [System.IO.Path]::DirectorySeparatorChar,
+    [System.IO.Path]::AltDirectorySeparatorChar
+  ))
+  $pathFullPath = [System.IO.Path]::GetFullPath($Path)
+  $comparison = if ([System.IO.Path]::DirectorySeparatorChar -eq '\') {
+    [System.StringComparison]::OrdinalIgnoreCase
+  }
+  else {
+    [System.StringComparison]::Ordinal
+  }
+  $prefix = "$repoFullPath$([System.IO.Path]::DirectorySeparatorChar)"
+
+  if ($pathFullPath.StartsWith($prefix, $comparison)) {
+    $relativePath = $pathFullPath.Substring($prefix.Length)
+  }
+  else {
+    $repoUriPath = if ($repoFullPath.EndsWith([System.IO.Path]::DirectorySeparatorChar)) {
+      $repoFullPath
+    }
+    else {
+      "$repoFullPath$([System.IO.Path]::DirectorySeparatorChar)"
+    }
+    $repoUri = [System.Uri]::new($repoUriPath)
+    $pathUri = [System.Uri]::new($pathFullPath)
+    $relativePath = [System.Uri]::UnescapeDataString($repoUri.MakeRelativeUri($pathUri).ToString())
+  }
+
   return ($relativePath -replace '\\', '/')
+}
+
+function Get-GitBlobSha1ForContent {
+  param([byte[]]$Content)
+
+  $header = [System.Text.Encoding]::ASCII.GetBytes("blob $($Content.Length)")
+  $bytes = [byte[]]::new($header.Length + 1 + $Content.Length)
+  [System.Buffer]::BlockCopy($header, 0, $bytes, 0, $header.Length)
+  $bytes[$header.Length] = 0
+  [System.Buffer]::BlockCopy($Content, 0, $bytes, $header.Length + 1, $Content.Length)
+
+  $sha1 = [System.Security.Cryptography.SHA1]::Create()
+  try {
+    return [System.BitConverter]::ToString($sha1.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+  }
+  finally {
+    $sha1.Dispose()
+  }
+}
+
+function Get-GitBlobSha1Candidates {
+  param([System.IO.FileInfo]$File)
+
+  try {
+    $content = [System.IO.File]::ReadAllBytes($File.FullName)
+    $hashes = @(Get-GitBlobSha1ForContent $content)
+
+    $text = [System.Text.Encoding]::UTF8.GetString($content)
+    if ($text.Contains("`r`n")) {
+      $normalizedContent = [System.Text.Encoding]::UTF8.GetBytes(($text -replace "`r`n", "`n"))
+      $hashes += Get-GitBlobSha1ForContent $normalizedContent
+    }
+
+    return $hashes | Select-Object -Unique
+  }
+  catch [System.Text.DecoderFallbackException] {
+    return @()
+  }
+  catch [System.IO.IOException], [System.UnauthorizedAccessException], [System.Security.SecurityException] {
+    return @()
+  }
+}
+
+function Get-UntrackedFileCount {
+  param(
+    [System.IO.DirectoryInfo]$Directory,
+    [int]$Limit = 1000
+  )
+
+  $count = 0
+  $stack = [System.Collections.Generic.Stack[System.IO.DirectoryInfo]]::new()
+  $stack.Push($Directory)
+
+  while (($stack.Count -gt 0) -and ($count -lt $Limit)) {
+    $currentDirectory = $stack.Pop()
+    try {
+      foreach ($file in $currentDirectory.EnumerateFiles()) {
+        if ($file.Name -eq '.git') {
+          continue
+        }
+
+        $count += 1
+        if ($count -ge $Limit) {
+          break
+        }
+      }
+
+      if ($count -ge $Limit) {
+        break
+      }
+
+      foreach ($childDirectory in $currentDirectory.EnumerateDirectories()) {
+        if (($childDirectory.Name -eq '.git') -or (($childDirectory.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
+          continue
+        }
+
+        $stack.Push($childDirectory)
+      }
+    }
+    catch [System.IO.IOException], [System.UnauthorizedAccessException], [System.Security.SecurityException] {
+      continue
+    }
+  }
+
+  return $count
 }
 
 function Get-GitFastWorkingTreeStatus {
@@ -293,7 +409,7 @@ function Get-GitFastWorkingTreeStatus {
     return $status
   }
 
-  $comparer = if ($IsWindows) {
+  $comparer = if ([System.IO.Path]::DirectorySeparatorChar -eq '\') {
     [System.StringComparer]::OrdinalIgnoreCase
   }
   else {
@@ -319,7 +435,7 @@ function Get-GitFastWorkingTreeStatus {
     $directory = $stack.Pop()
     try {
       foreach ($childDirectory in $directory.EnumerateDirectories()) {
-        if ($childDirectory.Name -eq '.git') {
+        if (($childDirectory.Name -eq '.git') -or (($childDirectory.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
           continue
         }
 
@@ -328,7 +444,7 @@ function Get-GitFastWorkingTreeStatus {
           $stack.Push($childDirectory)
         }
         else {
-          $status.Untracked += 1
+          $status.Untracked += Get-UntrackedFileCount $childDirectory
         }
       }
 
@@ -340,8 +456,15 @@ function Get-GitFastWorkingTreeStatus {
         $relativePath = ConvertTo-GitRelativePath $RepoPath $file.FullName
         if ($trackedPaths.Contains($relativePath)) {
           $entry = $indexEntries[$relativePath]
-          if ([uint64]$file.Length -ne [uint64]$entry.Size) {
+          $lastWriteSeconds = [uint64][Math]::Floor(($file.LastWriteTimeUtc - [datetime]'1970-01-01Z').TotalSeconds)
+          if ([uint64]$file.Length -ne $entry.Size) {
             $status.Dirty += 1
+          }
+          elseif ($lastWriteSeconds -ne $entry.MTime) {
+            $blobShaCandidates = @(Get-GitBlobSha1Candidates $file)
+            if (($blobShaCandidates.Count -eq 0) -or ($entry.Oid -notin $blobShaCandidates)) {
+              $status.Dirty += 1
+            }
           }
         }
         else {
@@ -349,7 +472,9 @@ function Get-GitFastWorkingTreeStatus {
         }
       }
     }
-    catch { }
+    catch [System.IO.IOException], [System.UnauthorizedAccessException], [System.Security.SecurityException] {
+      continue
+    }
   }
 
   return $status

@@ -13,7 +13,9 @@ $global:flare_fastRefreshTimestamps = [System.Collections.Concurrent.ConcurrentD
 $global:flare_mainThread = @('os', 'date', 'lastCommand', 'pwd')
 
 # Fast pieces that should refresh every prompt because their state can change without touching prompt caches.
-$global:flare_alwaysRefreshFastPieces ??= @('git')
+if ($null -eq $global:flare_alwaysRefreshFastPieces) {
+    $global:flare_alwaysRefreshFastPieces = @('git')
+}
 
 # Use a concurrent collection to track all background jobs
 $global:flare_backgroundJobs = [System.Collections.Concurrent.ConcurrentBag[object]]::new()

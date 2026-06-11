@@ -86,7 +86,7 @@ function flare_git {
     }
 
     # Get git status and counts like tide
-    $stat = git --no-optional-locks status --porcelain --untracked-files=normal 2>$null
+    $stat = git --no-optional-locks status --porcelain --untracked-files=all 2>$null
     
     # Count stashes
     $stashList = git stash list 2>$null
