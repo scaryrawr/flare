@@ -166,6 +166,195 @@ function Get-StashCount {
   return 0
 }
 
+function Read-GitIndexUInt32 {
+  param(
+    [byte[]]$Bytes,
+    [int]$Offset
+  )
+
+  return [uint32](
+    ([uint32]$Bytes[$Offset] -shl 24) -bor
+    ([uint32]$Bytes[$Offset + 1] -shl 16) -bor
+    ([uint32]$Bytes[$Offset + 2] -shl 8) -bor
+    [uint32]$Bytes[$Offset + 3]
+  )
+}
+
+function Read-GitIndexUInt16 {
+  param(
+    [byte[]]$Bytes,
+    [int]$Offset
+  )
+
+  return [uint16]((([uint16]$Bytes[$Offset]) -shl 8) -bor [uint16]$Bytes[$Offset + 1])
+}
+
+function Get-GitIndexEntries {
+  param([string]$GitDir)
+
+  $entries = @{}
+  $indexPath = Join-Path $GitDir 'index'
+  if (-not (Test-Path $indexPath -PathType Leaf)) {
+    return $entries
+  }
+
+  try {
+    $bytes = [System.IO.File]::ReadAllBytes($indexPath)
+    if ($bytes.Length -lt 12) {
+      return $entries
+    }
+
+    $signature = [System.Text.Encoding]::ASCII.GetString($bytes, 0, 4)
+    $version = Read-GitIndexUInt32 $bytes 4
+    if (($signature -ne 'DIRC') -or ($version -notin @(2, 3))) {
+      return $entries
+    }
+
+    $count = Read-GitIndexUInt32 $bytes 8
+    $offset = 12
+
+    for ($i = 0; $i -lt $count; $i++) {
+      $entryStart = $offset
+      if ($offset + 62 -gt $bytes.Length) {
+        break
+      }
+
+      $mtime = Read-GitIndexUInt32 $bytes ($offset + 8)
+      $size = Read-GitIndexUInt32 $bytes ($offset + 36)
+      $flags = Read-GitIndexUInt16 $bytes ($offset + 60)
+      $pathLength = $flags -band 0x0fff
+      $pathStart = $offset + 62
+      if (($flags -band 0x4000) -ne 0) {
+        $pathStart += 2
+      }
+
+      if ($pathStart -ge $bytes.Length) {
+        break
+      }
+
+      $pathEnd = $pathStart
+      if ($pathLength -eq 0x0fff) {
+        while (($pathEnd -lt $bytes.Length) -and ($bytes[$pathEnd] -ne 0)) {
+          $pathEnd++
+        }
+      }
+      else {
+        $pathEnd = [Math]::Min($pathStart + $pathLength, $bytes.Length)
+      }
+
+      if ($pathEnd -le $pathStart) {
+        break
+      }
+
+      $path = [System.Text.Encoding]::UTF8.GetString($bytes, $pathStart, $pathEnd - $pathStart)
+      $entries[$path] = @{
+        MTime = $mtime
+        Size  = $size
+      }
+
+      while (($pathEnd -lt $bytes.Length) -and ($bytes[$pathEnd] -ne 0)) {
+        $pathEnd++
+      }
+
+      $offset = $pathEnd + 1
+      while ((($offset - $entryStart) % 8 -ne 0) -and ($offset -lt $bytes.Length)) {
+        $offset++
+      }
+    }
+  }
+  catch { }
+
+  return $entries
+}
+
+function ConvertTo-GitRelativePath {
+  param(
+    [string]$RepoPath,
+    [string]$Path
+  )
+
+  $relativePath = [System.IO.Path]::GetRelativePath($RepoPath, $Path)
+  return ($relativePath -replace '\\', '/')
+}
+
+function Get-GitFastWorkingTreeStatus {
+  param(
+    [string]$RepoPath,
+    [string]$GitDir
+  )
+
+  $status = @{
+    Dirty     = 0
+    Untracked = 0
+  }
+
+  $indexEntries = Get-GitIndexEntries $GitDir
+  if ($indexEntries.Count -eq 0) {
+    return $status
+  }
+
+  $comparer = if ($IsWindows) {
+    [System.StringComparer]::OrdinalIgnoreCase
+  }
+  else {
+    [System.StringComparer]::Ordinal
+  }
+
+  $trackedPaths = [System.Collections.Generic.HashSet[string]]::new($comparer)
+  $trackedDirectories = [System.Collections.Generic.HashSet[string]]::new($comparer)
+
+  foreach ($path in $indexEntries.Keys) {
+    $null = $trackedPaths.Add($path)
+    $directory = [System.IO.Path]::GetDirectoryName($path) -replace '\\', '/'
+    while ($directory) {
+      $null = $trackedDirectories.Add($directory)
+      $directory = [System.IO.Path]::GetDirectoryName($directory) -replace '\\', '/'
+    }
+  }
+
+  $stack = [System.Collections.Generic.Stack[System.IO.DirectoryInfo]]::new()
+  $stack.Push([System.IO.DirectoryInfo]::new($RepoPath))
+
+  while ($stack.Count -gt 0) {
+    $directory = $stack.Pop()
+    try {
+      foreach ($childDirectory in $directory.EnumerateDirectories()) {
+        if ($childDirectory.Name -eq '.git') {
+          continue
+        }
+
+        $relativePath = ConvertTo-GitRelativePath $RepoPath $childDirectory.FullName
+        if ($trackedDirectories.Contains($relativePath)) {
+          $stack.Push($childDirectory)
+        }
+        else {
+          $status.Untracked += 1
+        }
+      }
+
+      foreach ($file in $directory.EnumerateFiles()) {
+        if ($file.Name -eq '.git') {
+          continue
+        }
+
+        $relativePath = ConvertTo-GitRelativePath $RepoPath $file.FullName
+        if ($trackedPaths.Contains($relativePath)) {
+          $entry = $indexEntries[$relativePath]
+          if ([uint64]$file.Length -ne [uint64]$entry.Size) {
+            $status.Dirty += 1
+          }
+        }
+        else {
+          $status.Untracked += 1
+        }
+      }
+    }
+    catch { }
+  }
+
+  return $status
+}
+
 function flare_git_fast {
   # Get repository info
   $repoInfo = Get-GitRepoInfo
@@ -222,10 +411,21 @@ function flare_git_fast {
       }
     }
     
+    $workingTreeStatus = Get-GitFastWorkingTreeStatus $repoInfo.RepoPath $gitDir
+
+    # Add status indicators (matching tide order where available: stash, dirty, untracked)
+    $statusParts = @()
+
     # Add stash indicator
     $stashCount = Get-StashCount $gitDir
     if ($stashCount -gt 0) {
-      $output += " *$stashCount"
+      $statusParts += "*$stashCount"
+    }
+    if ($workingTreeStatus.Dirty -gt 0) { $statusParts += "!$($workingTreeStatus.Dirty)" }
+    if ($workingTreeStatus.Untracked -gt 0) { $statusParts += "?$($workingTreeStatus.Untracked)" }
+
+    if ($statusParts.Count -gt 0) {
+      $output += " " + ($statusParts -join " ")
     }
     
     return $output

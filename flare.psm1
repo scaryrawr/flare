@@ -6,8 +6,14 @@ $global:flare_resultCache = [System.Collections.Concurrent.ConcurrentDictionary[
 # Cache for what was last rendered, to be used to compare with result cache
 $global:flare_lastRenderCache = @{}
 
+# Last refresh time for fast pieces that update the cache synchronously.
+$global:flare_fastRefreshTimestamps = [System.Collections.Concurrent.ConcurrentDictionary[string, datetime]]::new()
+
 # Items we can calculate on the main thread, but should also ignore when comparing changes from the background job
 $global:flare_mainThread = @('os', 'date', 'lastCommand', 'pwd')
+
+# Fast pieces that should refresh every prompt because their state can change without touching prompt caches.
+$global:flare_alwaysRefreshFastPieces ??= @('git')
 
 # Use a concurrent collection to track all background jobs
 $global:flare_backgroundJobs = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
@@ -142,7 +148,11 @@ function Update-MainThreadPieces {
     $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
     # Find the intersection of all prompt pieces and main thread items
     $mainThreadPieces = $allPieces | Where-Object { $_ -in $global:flare_mainThread }
-    $mainThreadPieces += $allPieces | Where-Object { ($_ -notin $global:flare_mainThread) -and (-not $global:flare_resultCache.ContainsKey($_)) } | ForEach-Object { "${_}_fast" }
+    $mainThreadPieces += $allPieces | Where-Object {
+        ($_ -notin $global:flare_mainThread) -and
+        (($_ -in $global:flare_alwaysRefreshFastPieces) -or (-not $global:flare_resultCache.ContainsKey($_)))
+    } | ForEach-Object { "${_}_fast" }
+    $mainThreadPieces = $mainThreadPieces | Select-Object -Unique
 
     $mainThreadResults = Get-PromptPieceResults -Pieces $mainThreadPieces
 
@@ -151,9 +161,12 @@ function Update-MainThreadPieces {
         if ($piece -like '*_fast') {
             $pieceFast = $piece
             $piece = $piece -replace '_fast', ''
-            # Fast results are only valid when we don't have a cached actual result.
-            if (-not $global:flare_resultCache.ContainsKey($piece)) {
+            # Most fast results are fallbacks; selected pieces use them for cheap, synchronous freshness.
+            if (($piece -in $global:flare_alwaysRefreshFastPieces) -or (-not $global:flare_resultCache.ContainsKey($piece))) {
                 $global:flare_resultCache[$piece] = $mainThreadResults[$pieceFast]
+                if ($piece -in $global:flare_alwaysRefreshFastPieces) {
+                    $global:flare_fastRefreshTimestamps[$piece] = Get-Date
+                }
             }
         }
         else {
@@ -166,6 +179,9 @@ function Update-BackgroundThreadPieces {
     $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
     # Find the intersection of all prompt pieces and main thread items
     $backgroundThreadPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
+    if ($backgroundThreadPieces.Count -eq 0) {
+        return
+    }
 
     # Capture the working directory at the time the job is created.
     # Background jobs run in another runspace and may not inherit the caller's location,
@@ -319,6 +335,11 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
         if ($newestPackage) {
             # Apply the results to the main cache
             foreach ($piece in $newestPackage.Results.Keys) {
+                $lastFastRefresh = $null
+                if ($global:flare_fastRefreshTimestamps.TryGetValue($piece, [ref]$lastFastRefresh) -and $newestPackage.Timestamp -lt $lastFastRefresh) {
+                    continue
+                }
+
                 $global:flare_resultCache[$piece] = $newestPackage.Results[$piece]
             }
 
@@ -408,6 +429,7 @@ function Prompt {
             # Clear the last render cache when the directory changes
             $global:flare_lastRenderCache.Clear()
             $global:flare_resultCache.Clear()
+            $global:flare_fastRefreshTimestamps.Clear()
 
             # Cancel any in-flight background jobs created for the previous directory.
             # If we don't, a slower job can complete after cd and OnIdle can reapply
