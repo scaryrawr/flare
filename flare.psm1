@@ -20,6 +20,9 @@ if ($null -eq $global:flare_alwaysRefreshFastPieces) {
 # Use a concurrent collection to track all background jobs
 $global:flare_backgroundJobs = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
 
+# Background prompt refreshes are best-effort; don't let slow pieces stack up.
+$global:flare_backgroundJobTimeout ??= [TimeSpan]::FromSeconds(10)
+
 $global:flare_lastDirectory = $null
 
 $global:flare_redrawing = $false
@@ -146,6 +149,16 @@ function Get-PromptLine {
     return "$defaultStyle$global:flare_bottomPrefix$($promptColor)$($global:flare_promptArrow * ($nestedPromptLevel + 1))$defaultStyle"
 }
 
+function Get-FlareGitMetadataPrefix {
+    param([string]$Value)
+
+    if (-not $Value) {
+        return ''
+    }
+
+    return ($Value -replace ' (?:⇣|⇡|\*|~|\+|!|\?)\d+(?: .*)?$', '')
+}
+
 function Update-MainThreadPieces {
     $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
     # Find the intersection of all prompt pieces and main thread items
@@ -165,7 +178,19 @@ function Update-MainThreadPieces {
             $piece = $piece -replace '_fast', ''
             # Most fast results are fallbacks; selected pieces use them for cheap, synchronous freshness.
             if (($piece -in $global:flare_alwaysRefreshFastPieces) -or (-not $global:flare_resultCache.ContainsKey($piece))) {
-                $global:flare_resultCache[$piece] = $mainThreadResults[$pieceFast]
+                $fastResult = $mainThreadResults[$pieceFast]
+                $cachedResult = $null
+                if (
+                    ($piece -eq 'git') -and
+                    $fastResult -and
+                    $global:flare_resultCache.TryGetValue($piece, [ref]$cachedResult) -and
+                    ((Get-FlareGitMetadataPrefix $cachedResult) -eq $fastResult)
+                ) {
+                    # Keep completed background status counts when only cheap git metadata was refreshed.
+                }
+                else {
+                    $global:flare_resultCache[$piece] = $fastResult
+                }
                 if ($piece -in $global:flare_alwaysRefreshFastPieces) {
                     $global:flare_fastRefreshTimestamps[$piece] = Get-Date
                 }
@@ -192,6 +217,43 @@ function Update-BackgroundThreadPieces {
 
     # Generate a timestamp for this job
     $timestamp = Get-Date
+
+    $hasActiveCurrentDirectoryJob = $false
+    $jobsToKeep = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
+    foreach ($existingJob in $global:flare_backgroundJobs) {
+        if (-not (Test-FlareBackgroundJobTerminalState $existingJob)) {
+            $jobWorkingDirectoryProperty = $existingJob.PSObject.Properties['WorkingDirectory']
+            $jobTimestampProperty = $existingJob.PSObject.Properties['Timestamp']
+            $jobWorkingDirectory = if ($jobWorkingDirectoryProperty) { $jobWorkingDirectoryProperty.Value } else { $null }
+            $jobTimestamp = if ($jobTimestampProperty) { $jobTimestampProperty.Value } else { $timestamp }
+
+            if (
+                ($jobWorkingDirectory -eq $workingDirectory) -and
+                ($global:flare_backgroundJobTimeout -gt [TimeSpan]::Zero) -and
+                (($timestamp - $jobTimestamp) -gt $global:flare_backgroundJobTimeout)
+            ) {
+                try {
+                    Stop-Job -Job $existingJob -Force -ErrorAction SilentlyContinue
+                    Remove-Job -Job $existingJob -Force -ErrorAction SilentlyContinue
+                }
+                catch {
+                    # Ignore failures; the next idle cleanup can handle jobs that already changed state.
+                }
+                continue
+            }
+
+            if ($jobWorkingDirectory -eq $workingDirectory) {
+                $hasActiveCurrentDirectoryJob = $true
+            }
+        }
+
+        $jobsToKeep.Add($existingJob)
+    }
+    $global:flare_backgroundJobs = $jobsToKeep
+
+    if ($hasActiveCurrentDirectoryJob) {
+        return
+    }
 
     $job = Start-ThreadJob -Name "Flare Background Update $(Get-Date -Format 'HH:mm:ss.fff')" -ScriptBlock {
         param($pieces, $results, $timestamp, $workingDirectory)
@@ -228,6 +290,7 @@ function Update-BackgroundThreadPieces {
 
     # Add the new job and its timestamp to our tracking collection
     $job | Add-Member -NotePropertyName Timestamp -NotePropertyValue $timestamp
+    $job | Add-Member -NotePropertyName WorkingDirectory -NotePropertyValue $workingDirectory
     $global:flare_backgroundJobs.Add($job)
 }
 
@@ -338,7 +401,17 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
             # Apply the results to the main cache
             foreach ($piece in $newestPackage.Results.Keys) {
                 $lastFastRefresh = $null
-                if ($global:flare_fastRefreshTimestamps.TryGetValue($piece, [ref]$lastFastRefresh) -and $newestPackage.Timestamp -lt $lastFastRefresh) {
+                if ($piece -eq 'git') {
+                    $currentGitValue = $null
+                    $newGitValue = $newestPackage.Results[$piece]
+                    if (
+                        $global:flare_resultCache.TryGetValue($piece, [ref]$currentGitValue) -and
+                        ((Get-FlareGitMetadataPrefix $newGitValue) -ne (Get-FlareGitMetadataPrefix $currentGitValue))
+                    ) {
+                        continue
+                    }
+                }
+                elseif ($global:flare_fastRefreshTimestamps.TryGetValue($piece, [ref]$lastFastRefresh) -and $newestPackage.Timestamp -lt $lastFastRefresh) {
                     continue
                 }
 
