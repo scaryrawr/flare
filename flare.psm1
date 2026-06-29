@@ -233,7 +233,7 @@ function Update-BackgroundThreadPieces {
                 (($timestamp - $jobTimestamp) -gt $global:flare_backgroundJobTimeout)
             ) {
                 try {
-                    Stop-Job -Job $existingJob -Force -ErrorAction SilentlyContinue
+                    Stop-Job -Job $existingJob -ErrorAction SilentlyContinue
                     Remove-Job -Job $existingJob -Force -ErrorAction SilentlyContinue
                 }
                 catch {
@@ -491,7 +491,7 @@ $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
     Get-EventSubscriber | Unregister-Event
     # Clean up all background jobs
     foreach ($job in $global:flare_backgroundJobs) {
-        Stop-Job -Job $job -Force -ErrorAction SilentlyContinue
+        Stop-Job -Job $job -ErrorAction SilentlyContinue
         Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
     }
 
@@ -511,7 +511,7 @@ function Prompt {
             # stale results for the old directory.
             foreach ($job in $global:flare_backgroundJobs) {
                 try {
-                    Stop-Job -Job $job -Force -ErrorAction SilentlyContinue
+                    Stop-Job -Job $job -ErrorAction SilentlyContinue
                     Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
                 }
                 catch {
