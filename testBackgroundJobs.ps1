@@ -71,20 +71,40 @@ try {
 
     'Untracked content' | Out-File -FilePath 'untracked.txt' -Encoding utf8
 
+    $untrackedRefreshTiming = [System.Diagnostics.Stopwatch]::StartNew()
     $untrackedGitStatus = & $module {
         Update-MainThreadPieces
         $global:flare_resultCache['git']
     }
+    $untrackedRefreshTiming.Stop()
 
     if ($cleanGitStatus -match '\?1') {
         Write-Host "FAIL Clean git prompt unexpectedly reported untracked files: '$cleanGitStatus'" -ForegroundColor Red
         $allTestsPassed = $false
     }
-    elseif ($untrackedGitStatus -match '\?1') {
-        Write-Host 'PASS Git prompt cache refreshes untracked files immediately'
+    elseif ($untrackedGitStatus -match '\?') {
+        Write-Host "FAIL Git fast prompt synchronously scanned untracked files: '$untrackedGitStatus'" -ForegroundColor Red
+        $allTestsPassed = $false
+    }
+    elseif ($untrackedRefreshTiming.Elapsed.TotalMilliseconds -gt 250) {
+        Write-Host "FAIL Git fast prompt took $([math]::Round($untrackedRefreshTiming.Elapsed.TotalMilliseconds, 2)) ms after adding untracked files" -ForegroundColor Red
+        $allTestsPassed = $false
     }
     else {
-        Write-Host "FAIL Git prompt cache did not report untracked files. Actual: '$untrackedGitStatus'" -ForegroundColor Red
+        Write-Host 'PASS Git fast prompt avoids synchronous untracked scans'
+    }
+
+    $preservedGitStatus = & $module {
+        $global:flare_resultCache['git'] = 'main ?1'
+        Update-MainThreadPieces
+        $global:flare_resultCache['git']
+    }
+
+    if ($preservedGitStatus -eq 'main ?1') {
+        Write-Host 'PASS Git fast prompt preserves completed background status'
+    }
+    else {
+        Write-Host "FAIL Git fast prompt dropped cached background status. Actual: '$preservedGitStatus'" -ForegroundColor Red
         $allTestsPassed = $false
     }
 }
