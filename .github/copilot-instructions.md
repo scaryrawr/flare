@@ -19,6 +19,8 @@
 ## Caching + background updates
 - Main-thread pieces are listed in `$global:flare_mainThread` (defaults: `os`, `date`, `lastCommand`, `pwd`). Others run in `Start-ThreadJob`.
 - Background jobs write a timestamped `_package_<timestamp>` into `$global:flare_resultCache` (a `ConcurrentDictionary`); `PowerShell.OnIdle` applies only the newest package, then redraws if values differ from `$global:flare_lastRenderCache`.
+- `PowerShell.OnIdle` event actions run as event jobs and may keep their own stale location/function scope; keep the registered action self-contained and use the last rendered prompt directory (`$global:flare_lastDirectory.Path`) when matching background packages.
+- Avoid `[ref]`-based `ConcurrentDictionary.TryGetValue` calls in prompt redraw/event-job paths; prefer `ContainsKey` plus indexed reads because event-job execution can fail PowerShell overload binding for those calls.
 - When `$PWD` changes, `Prompt` clears caches to avoid stale repo-specific results.
 
 ## Customization knobs

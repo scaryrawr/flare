@@ -107,6 +107,48 @@ try {
         Write-Host "FAIL Git fast prompt dropped cached background status. Actual: '$preservedGitStatus'" -ForegroundColor Red
         $allTestsPassed = $false
     }
+
+    $appliedStatusFromLastPromptDirectory = & $module {
+        param($promptDirectory, $eventDirectory)
+
+        $global:flare_resultCache.Clear()
+        $global:flare_lastRenderCache.Clear()
+        $global:flare_fastRefreshTimestamps.Clear()
+        $global:flare_backgroundJobs = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
+        $global:flare_resultCache['git'] = 'main'
+        $global:flare_lastDirectory = [pscustomobject]@{ Path = $promptDirectory }
+
+        $timestamp = Get-Date
+        $global:flare_resultCache["_package_$timestamp"] = @{
+            Timestamp        = $timestamp
+            WorkingDirectory = $promptDirectory
+            Results          = @{ git = 'main ?1' }
+        }
+
+        $job = Start-ThreadJob -ScriptBlock { }
+        Wait-Job -Job $job | Out-Null
+        $job | Add-Member -NotePropertyName Timestamp -NotePropertyValue $timestamp
+        $job | Add-Member -NotePropertyName WorkingDirectory -NotePropertyValue $promptDirectory
+        $global:flare_backgroundJobs.Add($job)
+
+        Push-Location $eventDirectory
+        try {
+            Invoke-FlareBackgroundJobUpdates
+        }
+        finally {
+            Pop-Location
+        }
+
+        $global:flare_resultCache['git']
+    } $tempDir ([System.IO.Path]::GetTempPath())
+
+    if ($appliedStatusFromLastPromptDirectory -eq 'main ?1') {
+        Write-Host 'PASS Background git status applies for the last prompt directory'
+    }
+    else {
+        Write-Host "FAIL Background git status used the event location instead of the prompt directory. Actual: '$appliedStatusFromLastPromptDirectory'" -ForegroundColor Red
+        $allTestsPassed = $false
+    }
 }
 finally {
     Pop-Location -ErrorAction SilentlyContinue

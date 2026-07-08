@@ -179,12 +179,11 @@ function Update-MainThreadPieces {
             # Most fast results are fallbacks; selected pieces use them for cheap, synchronous freshness.
             if (($piece -in $global:flare_alwaysRefreshFastPieces) -or (-not $global:flare_resultCache.ContainsKey($piece))) {
                 $fastResult = $mainThreadResults[$pieceFast]
-                $cachedResult = $null
                 if (
                     ($piece -eq 'git') -and
                     $fastResult -and
-                    $global:flare_resultCache.TryGetValue($piece, [ref]$cachedResult) -and
-                    ((Get-FlareGitMetadataPrefix $cachedResult) -eq $fastResult)
+                    $global:flare_resultCache.ContainsKey($piece) -and
+                    ((Get-FlareGitMetadataPrefix $global:flare_resultCache[$piece]) -eq $fastResult)
                 ) {
                     # Keep completed background status counts when only cheap git metadata was refreshed.
                 }
@@ -309,9 +308,8 @@ function Get-PromptTopLine {
     foreach ($piece in @($global:flare_resultCache.Keys)) {
         # Skip our package keys when building prompt data
         if (-not $piece.StartsWith('_package_')) {
-            $value = $null
-            if ($global:flare_resultCache.TryGetValue($piece, [ref]$value)) {
-                $results[$piece] = $value
+            if ($global:flare_resultCache.ContainsKey($piece)) {
+                $results[$piece] = $global:flare_resultCache[$piece]
             }
         }
     }
@@ -345,7 +343,7 @@ function Test-FlareBackgroundJobTerminalState {
     )
 }
 
-Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
+$script:flare_backgroundJobUpdateAction = {
     # Check if there are any background jobs to process
     if ($global:flare_backgroundJobs.Count -eq 0) {
         return
@@ -353,7 +351,13 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
 
     # Only terminal jobs are safe to wait on. Queued jobs can sit in NotStarted,
     # and Wait-Job on those would block the interactive runspace.
-    $completedJobs = $global:flare_backgroundJobs | Where-Object { Test-FlareBackgroundJobTerminalState $_ }
+    $completedJobs = $global:flare_backgroundJobs | Where-Object {
+        $_.State -in @(
+            [System.Management.Automation.JobState]::Completed,
+            [System.Management.Automation.JobState]::Failed,
+            [System.Management.Automation.JobState]::Stopped
+        )
+    }
     if ($completedJobs.Count -eq 0) {
         return
     }
@@ -375,13 +379,19 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
         $newestPackage = $null
         $newestPackageTimestamp = [DateTime]::MinValue
 
-        $currentWorkingDirectory = (Get-Location).Path
+        # Engine event jobs can keep their own stale location; prompt state is authoritative.
+        $currentWorkingDirectory = if ($global:flare_lastDirectory -and $global:flare_lastDirectory.Path) {
+            $global:flare_lastDirectory.Path
+        }
+        else {
+            (Get-Location).Path
+        }
 
         foreach ($key in $packageKeys) {
-            $package = $null
-            if (-not $global:flare_resultCache.TryGetValue($key, [ref]$package)) {
+            if (-not $global:flare_resultCache.ContainsKey($key)) {
                 continue
             }
+            $package = $global:flare_resultCache[$key]
             if ($null -eq $package) {
                 continue
             }
@@ -400,18 +410,25 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
         if ($newestPackage) {
             # Apply the results to the main cache
             foreach ($piece in $newestPackage.Results.Keys) {
-                $lastFastRefresh = $null
                 if ($piece -eq 'git') {
-                    $currentGitValue = $null
                     $newGitValue = $newestPackage.Results[$piece]
+                    $newGitMetadataPrefix = if ($newGitValue) {
+                        $newGitValue -replace ' (?:⇣|⇡|\*|~|\+|!|\?)\d+(?: .*)?$', ''
+                    }
+                    else {
+                        ''
+                    }
                     if (
-                        $global:flare_resultCache.TryGetValue($piece, [ref]$currentGitValue) -and
-                        ((Get-FlareGitMetadataPrefix $newGitValue) -ne (Get-FlareGitMetadataPrefix $currentGitValue))
+                        $global:flare_resultCache.ContainsKey($piece) -and
+                        ($newGitMetadataPrefix -ne ($global:flare_resultCache[$piece] -replace ' (?:⇣|⇡|\*|~|\+|!|\?)\d+(?: .*)?$', ''))
                     ) {
                         continue
                     }
                 }
-                elseif ($global:flare_fastRefreshTimestamps.TryGetValue($piece, [ref]$lastFastRefresh) -and $newestPackage.Timestamp -lt $lastFastRefresh) {
+                elseif (
+                    $global:flare_fastRefreshTimestamps.ContainsKey($piece) -and
+                    $newestPackage.Timestamp -lt $global:flare_fastRefreshTimestamps[$piece]
+                ) {
                     continue
                 }
 
@@ -439,7 +456,13 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
 
     # Remove completed jobs from our tracking collection
     $newBag = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
-    foreach ($job in ($global:flare_backgroundJobs | Where-Object { -not (Test-FlareBackgroundJobTerminalState $_) })) {
+    foreach ($job in ($global:flare_backgroundJobs | Where-Object {
+        $_.State -notin @(
+            [System.Management.Automation.JobState]::Completed,
+            [System.Management.Automation.JobState]::Failed,
+            [System.Management.Automation.JobState]::Stopped
+        )
+    })) {
         $newBag.Add($job)
     }
     $global:flare_backgroundJobs = $newBag
@@ -449,11 +472,9 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
     # Check if there are changes between caches for background pieces
     $hasChanges = $false
     foreach ($piece in $comparisonPieces) {
-        $cachedValue = $null
-        # Use TryGetValue for atomic check-and-read to avoid race conditions
-        if ($global:flare_resultCache.TryGetValue($piece, [ref]$cachedValue)) {
+        if ($global:flare_resultCache.ContainsKey($piece)) {
             # If piece is in result cache but not in render cache or values differ
-            if ($cachedValue -ne $global:flare_lastRenderCache[$piece]) {
+            if ($global:flare_resultCache[$piece] -ne $global:flare_lastRenderCache[$piece]) {
                 $hasChanges = $true
                 break
             }
@@ -464,9 +485,8 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
     if ($hasChanges) {
         # Update the lastRenderCache with current values
         foreach ($piece in $comparisonPieces) {
-            $cachedValue = $null
-            if ($global:flare_resultCache.TryGetValue($piece, [ref]$cachedValue)) {
-                $global:flare_lastRenderCache[$piece] = $cachedValue
+            if ($global:flare_resultCache.ContainsKey($piece)) {
+                $global:flare_lastRenderCache[$piece] = $global:flare_resultCache[$piece]
             }
         }
 
@@ -481,6 +501,12 @@ Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
         $global:flare_redrawing = $false
     }
 }
+
+function Invoke-FlareBackgroundJobUpdates {
+    & $script:flare_backgroundJobUpdateAction
+}
+
+Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action $script:flare_backgroundJobUpdateAction
 
 # Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
 #     New-Event -SourceIdentifier Flare.Redraw -Sender $Sender
