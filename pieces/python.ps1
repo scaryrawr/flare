@@ -1,5 +1,11 @@
 . $PSScriptRoot/python_fast.ps1
 
+<#
+.SYNOPSIS
+Shows the Python version and active virtual environment.
+.OUTPUTS
+System.String
+#>
 function flare_python {
   $venv_name = flare_python_fast
   if (-not $venv_name) {

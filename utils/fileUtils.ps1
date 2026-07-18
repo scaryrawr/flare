@@ -28,6 +28,16 @@ $global:flare_findFileInParentDirectories ??= {
   return $null
 }
 
+<#
+.SYNOPSIS
+Finds the nearest named file in the current or an ancestor directory.
+.PARAMETER FileName
+The file or directory name to locate.
+.PARAMETER StartDirectory
+The directory where the upward search begins. Defaults to the current location.
+.OUTPUTS
+System.String
+#>
 function FindFileInParentDirectories {
   param (
     [string]$FileName,

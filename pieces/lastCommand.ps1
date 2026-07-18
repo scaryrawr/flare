@@ -1,3 +1,9 @@
+<#
+.SYNOPSIS
+Shows the duration of the most recent command when it exceeded 250 milliseconds.
+.OUTPUTS
+System.String
+#>
 function flare_lastCommand {
   $lastCommand = Get-History -Count 1
   if (-not $lastCommand) { return "" }

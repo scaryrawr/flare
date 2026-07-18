@@ -1,5 +1,11 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
+<#
+.SYNOPSIS
+Shows the Java version for a detected Maven or Gradle project.
+.OUTPUTS
+System.String
+#>
 function flare_java {
   $pomXmlPath = FindFileInParentDirectories -fileName 'pom.xml'
   $buildGradlePath = FindFileInParentDirectories -fileName 'build.gradle'
