@@ -134,7 +134,7 @@ catch {
     exit 1
 }
 
-Write-Host 'Testing background job state handling...' -ForegroundColor Cyan
+Write-Host 'Testing background refresh worker...' -ForegroundColor Cyan
 & "$PSScriptRoot/testBackgroundJobs.ps1"
 if (-not $?) {
     exit 1

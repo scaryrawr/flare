@@ -1,5 +1,11 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
+<#
+.SYNOPSIS
+Shows the Go version for a detected Go project.
+.OUTPUTS
+System.String
+#>
 function flare_go {
   $goModPath = FindFileInParentDirectories -fileName 'go.mod'
   $mainGoPath = FindFileInParentDirectories -fileName 'main.go'

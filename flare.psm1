@@ -1,15 +1,9 @@
 . $PSScriptRoot/promptSymbols.ps1
 
-# Shared dictionary for background job to store results
-$global:flare_resultCache = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new()
+# Prompt results are applied only on the interactive runspace.
+$global:flare_resultCache = @{}
 
-# Cache for what was last rendered, to be used to compare with result cache
-$global:flare_lastRenderCache = @{}
-
-# Last refresh time for fast pieces that update the cache synchronously.
-$global:flare_fastRefreshTimestamps = [System.Collections.Concurrent.ConcurrentDictionary[string, datetime]]::new()
-
-# Items we can calculate on the main thread, but should also ignore when comparing changes from the background job
+# Items calculated on the interactive runspace rather than the slow refresh worker
 $global:flare_mainThread = @('os', 'date', 'lastCommand', 'pwd')
 
 # Fast pieces that should refresh every prompt because their state can change without touching prompt caches.
@@ -17,15 +11,12 @@ if ($null -eq $global:flare_alwaysRefreshFastPieces) {
     $global:flare_alwaysRefreshFastPieces = @('git')
 }
 
-# Use a concurrent collection to track all background jobs
-$global:flare_backgroundJobs = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
-
-# Background prompt refreshes are best-effort; don't let slow pieces stack up.
-$global:flare_backgroundJobTimeout ??= [TimeSpan]::FromSeconds(10)
-
 $global:flare_lastDirectory = $null
 
 $global:flare_redrawing = $false
+
+$script:flare_nextRefreshRequestId = 0
+$script:flare_latestRefreshRequestId = 0
 
 $defaultStyle = "`e[0m"
 $foregroundStyles = [ordered]@{
@@ -71,7 +62,19 @@ $backgroundStyles = [ordered]@{
 $escapeRegex = "(`e\[\d+\w)"
 
 . $PSScriptRoot/utils/invokeUtils.ps1
+foreach ($pieceFile in Get-ChildItem (Join-Path $PSScriptRoot 'pieces') -Filter '*.ps1' -File) {
+    . $pieceFile.FullName
+}
+. $PSScriptRoot/utils/refreshWorker.ps1
 
+<#
+.SYNOPSIS
+Renders the configured left-side prompt pieces.
+.PARAMETER Parts
+Cached piece values keyed by piece name.
+.OUTPUTS
+System.String
+#>
 function Get-LeftPrompt {
     param(
         [Parameter(Mandatory = $true)]
@@ -104,6 +107,14 @@ function Get-LeftPrompt {
     return $left
 }
 
+<#
+.SYNOPSIS
+Renders the configured right-side prompt pieces.
+.PARAMETER Parts
+Cached piece values keyed by piece name.
+.OUTPUTS
+System.String
+#>
 function Get-RightPrompt {
     param(
         [Parameter(Mandatory = $true)]
@@ -135,6 +146,12 @@ function Get-RightPrompt {
     return $right
 }
 
+<#
+.SYNOPSIS
+Renders the bottom prompt line and command-status arrow.
+.OUTPUTS
+System.String
+#>
 function Get-PromptLine {
     # Check if the last command was successful
     # Get exit status from command history if available
@@ -149,6 +166,14 @@ function Get-PromptLine {
     return "$defaultStyle$global:flare_bottomPrefix$($promptColor)$($global:flare_promptArrow * ($nestedPromptLevel + 1))$defaultStyle"
 }
 
+<#
+.SYNOPSIS
+Extracts the fast Git metadata portion of a rendered Git value.
+.PARAMETER Value
+The rendered Git piece value, optionally including slow status counts.
+.OUTPUTS
+System.String
+#>
 function Get-FlareGitMetadataPrefix {
     param([string]$Value)
 
@@ -159,14 +184,23 @@ function Get-FlareGitMetadataPrefix {
     return ($Value -replace ' (?:⇣|⇡|\*|~|\+|!|\?)\d+(?: .*)?$', '')
 }
 
+<#
+.SYNOPSIS
+Evaluates synchronous and fast prompt pieces and updates the render cache.
+.OUTPUTS
+None
+#>
 function Update-MainThreadPieces {
     $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
     # Find the intersection of all prompt pieces and main thread items
     $mainThreadPieces = $allPieces | Where-Object { $_ -in $global:flare_mainThread }
-    $mainThreadPieces += $allPieces | Where-Object {
+    $fastPieceCandidates = $allPieces | Where-Object {
         ($_ -notin $global:flare_mainThread) -and
         (($_ -in $global:flare_alwaysRefreshFastPieces) -or (-not $global:flare_resultCache.ContainsKey($_)))
-    } | ForEach-Object { "${_}_fast" }
+    }
+    $mainThreadPieces += $fastPieceCandidates |
+        Where-Object { Test-Path (Join-Path $PSScriptRoot "pieces/${_}_fast.ps1") } |
+        ForEach-Object { "${_}_fast" }
     $mainThreadPieces = $mainThreadPieces | Select-Object -Unique
 
     $mainThreadResults = Get-PromptPieceResults -Pieces $mainThreadPieces
@@ -179,121 +213,58 @@ function Update-MainThreadPieces {
             # Most fast results are fallbacks; selected pieces use them for cheap, synchronous freshness.
             if (($piece -in $global:flare_alwaysRefreshFastPieces) -or (-not $global:flare_resultCache.ContainsKey($piece))) {
                 $fastResult = $mainThreadResults[$pieceFast]
-                $cachedResult = $null
                 if (
                     ($piece -eq 'git') -and
                     $fastResult -and
-                    $global:flare_resultCache.TryGetValue($piece, [ref]$cachedResult) -and
-                    ((Get-FlareGitMetadataPrefix $cachedResult) -eq $fastResult)
+                    $global:flare_resultCache.ContainsKey($piece) -and
+                    ((Get-FlareGitMetadataPrefix $global:flare_resultCache[$piece]) -eq $fastResult)
                 ) {
                     # Keep completed background status counts when only cheap git metadata was refreshed.
                 }
-                else {
+                elseif ($fastResult) {
                     $global:flare_resultCache[$piece] = $fastResult
                 }
-                if ($piece -in $global:flare_alwaysRefreshFastPieces) {
-                    $global:flare_fastRefreshTimestamps[$piece] = Get-Date
+                else {
+                    $global:flare_resultCache.Remove($piece)
                 }
             }
         }
-        else {
+        elseif ($mainThreadResults[$piece]) {
             $global:flare_resultCache[$piece] = $mainThreadResults[$piece]
+        }
+        else {
+            $global:flare_resultCache.Remove($piece)
         }
     }
 }
 
+<#
+.SYNOPSIS
+Submits the current slow-piece snapshot to the durable refresh worker.
+.OUTPUTS
+None
+#>
 function Update-BackgroundThreadPieces {
     $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
-    # Find the intersection of all prompt pieces and main thread items
     $backgroundThreadPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
     if ($backgroundThreadPieces.Count -eq 0) {
         return
     }
 
-    # Capture the working directory at the time the job is created.
-    # Background jobs run in another runspace and may not inherit the caller's location,
-    # which can cause pieces like `git` to be computed for the wrong directory.
-    $workingDirectory = $PWD.Path
-
-    # Generate a timestamp for this job
-    $timestamp = Get-Date
-
-    $hasActiveCurrentDirectoryJob = $false
-    $jobsToKeep = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
-    foreach ($existingJob in $global:flare_backgroundJobs) {
-        if (-not (Test-FlareBackgroundJobTerminalState $existingJob)) {
-            $jobWorkingDirectoryProperty = $existingJob.PSObject.Properties['WorkingDirectory']
-            $jobTimestampProperty = $existingJob.PSObject.Properties['Timestamp']
-            $jobWorkingDirectory = if ($jobWorkingDirectoryProperty) { $jobWorkingDirectoryProperty.Value } else { $null }
-            $jobTimestamp = if ($jobTimestampProperty) { $jobTimestampProperty.Value } else { $timestamp }
-
-            if (
-                ($jobWorkingDirectory -eq $workingDirectory) -and
-                ($global:flare_backgroundJobTimeout -gt [TimeSpan]::Zero) -and
-                (($timestamp - $jobTimestamp) -gt $global:flare_backgroundJobTimeout)
-            ) {
-                try {
-                    Stop-Job -Job $existingJob -ErrorAction SilentlyContinue
-                    Remove-Job -Job $existingJob -Force -ErrorAction SilentlyContinue
-                }
-                catch {
-                    # Ignore failures; the next idle cleanup can handle jobs that already changed state.
-                }
-                continue
-            }
-
-            if ($jobWorkingDirectory -eq $workingDirectory) {
-                $hasActiveCurrentDirectoryJob = $true
-            }
-        }
-
-        $jobsToKeep.Add($existingJob)
-    }
-    $global:flare_backgroundJobs = $jobsToKeep
-
-    if ($hasActiveCurrentDirectoryJob) {
-        return
-    }
-
-    $job = Start-ThreadJob -Name "Flare Background Update $(Get-Date -Format 'HH:mm:ss.fff')" -ScriptBlock {
-        param($pieces, $results, $timestamp, $workingDirectory)
-        Write-Output "Updating background pieces: $pieces at timestamp $timestamp"
-        . $using:PSScriptRoot/utils/invokeUtils.ps1
-
-        # Ensure piece evaluation happens in the directory that created the job.
-        try {
-            if ($workingDirectory) {
-                Set-Location -LiteralPath $workingDirectory -ErrorAction Stop
-            }
-        }
-        catch {
-            # If we can't cd (directory removed, permissions, etc.), continue. Pieces should fail closed.
-        }
-
-        $piecesResults = Get-PromptPieceResults -Pieces $pieces -PiecesPath $using:PSScriptRoot/pieces
-
-        # Create a results package with timestamp
-        $resultsPackage = @{
-            Timestamp        = $timestamp
-            WorkingDirectory = $workingDirectory
-            Results          = @{}
-        }
-
-        foreach ($piece in $pieces) {
-            Write-Output "Piece: $piece, Result: $($piecesResults[$piece])"
-            $resultsPackage.Results[$piece] = $piecesResults[$piece]
-        }
-
-        # Store the entire package
-        $results["_package_$timestamp"] = $resultsPackage
-    } -ArgumentList $backgroundThreadPieces, $global:flare_resultCache, $timestamp, $workingDirectory
-
-    # Add the new job and its timestamp to our tracking collection
-    $job | Add-Member -NotePropertyName Timestamp -NotePropertyValue $timestamp
-    $job | Add-Member -NotePropertyName WorkingDirectory -NotePropertyValue $workingDirectory
-    $global:flare_backgroundJobs.Add($job)
+    $script:flare_latestRefreshRequestId = Send-FlareRefreshRequest `
+        -WorkingDirectory $PWD.Path `
+        -Pieces $backgroundThreadPieces `
+        -ModuleRoot $PSScriptRoot
 }
 
+<#
+.SYNOPSIS
+Builds the top prompt line from current fast and cached slow results.
+.PARAMETER DisableBackground
+Prevents a new slow refresh request, such as during an idle redraw.
+.OUTPUTS
+System.String
+#>
 function Get-PromptTopLine {
     param(
         [bool]$DisableBackground = $false
@@ -305,15 +276,8 @@ function Get-PromptTopLine {
     }
 
     $results = @{}
-    # Take a snapshot of keys to avoid enumeration issues with concurrent modifications
-    foreach ($piece in @($global:flare_resultCache.Keys)) {
-        # Skip our package keys when building prompt data
-        if (-not $piece.StartsWith('_package_')) {
-            $value = $null
-            if ($global:flare_resultCache.TryGetValue($piece, [ref]$value)) {
-                $results[$piece] = $value
-            }
-        }
+    foreach ($piece in $global:flare_resultCache.Keys) {
+        $results[$piece] = $global:flare_resultCache[$piece]
     }
 
     $left = Get-LeftPrompt -Parts $results
@@ -332,198 +296,124 @@ function Get-PromptTopLine {
     }
 }
 
-function Test-FlareBackgroundJobTerminalState {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object]$Job
-    )
+<#
+.SYNOPSIS
+Applies the newest valid worker result and redraws changed prompt content.
+.PARAMETER DisableRedraw
+Applies accepted results without invoking a PSReadLine prompt redraw.
+.OUTPUTS
+System.Boolean
+#>
+function Update-FlareBackgroundResults {
+    param([switch]$DisableRedraw)
 
-    $Job.State -in @(
-        [System.Management.Automation.JobState]::Completed,
-        [System.Management.Automation.JobState]::Failed,
-        [System.Management.Automation.JobState]::Stopped
-    )
-}
+    $currentWorkingDirectory = $PWD.Path
+    $acceptedResult = @(Receive-FlareRefreshResult) |
+        Where-Object {
+            $_.RequestId -eq $script:flare_latestRefreshRequestId -and
+            $_.WorkingDirectory -eq $currentWorkingDirectory
+        } |
+        Select-Object -Last 1
 
-Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
-    # Check if there are any background jobs to process
-    if ($global:flare_backgroundJobs.Count -eq 0) {
-        return
+    if (-not $acceptedResult) {
+        return $false
     }
 
-    # Only terminal jobs are safe to wait on. Queued jobs can sit in NotStarted,
-    # and Wait-Job on those would block the interactive runspace.
-    $completedJobs = $global:flare_backgroundJobs | Where-Object { Test-FlareBackgroundJobTerminalState $_ }
-    if ($completedJobs.Count -eq 0) {
-        return
+    if (-not $acceptedResult.Succeeded) {
+        Write-Debug "Flare background refresh failed: $($acceptedResult.Error)"
+        return $false
     }
 
-    # Find the newest completed job
-    $newestCompletedJob = $completedJobs | Sort-Object -Property Timestamp -Descending | Select-Object -First 1
-
-    # Process the newest job first to get its results
-    if ($newestCompletedJob) {
-        $null = Wait-Job -Job $newestCompletedJob -ErrorAction SilentlyContinue
-
-        # Find and extract the package with the timestamp from the result cache
-        # Take a snapshot of keys to avoid enumeration issues with concurrent modifications
-        $packageKeys = @($global:flare_resultCache.Keys) | Where-Object { $_ -like '_package_*' }
-
-        # Find the newest package for the CURRENT working directory by timestamp.
-        # Without this, a job created in a previous directory can complete later and
-        # overwrite the cache, reintroducing stale data (notably the `git` piece).
-        $newestPackage = $null
-        $newestPackageTimestamp = [DateTime]::MinValue
-
-        $currentWorkingDirectory = (Get-Location).Path
-
-        foreach ($key in $packageKeys) {
-            $package = $null
-            if (-not $global:flare_resultCache.TryGetValue($key, [ref]$package)) {
-                continue
-            }
-            if ($null -eq $package) {
-                continue
-            }
-
-            if ($package.WorkingDirectory -ne $currentWorkingDirectory) {
-                continue
-            }
-
-            if ($package.Timestamp -gt $newestPackageTimestamp) {
-                $newestPackageTimestamp = $package.Timestamp
-                $newestPackage = $package
-            }
-        }
-
-        # Only apply results from the newest completed job
-        if ($newestPackage) {
-            # Apply the results to the main cache
-            foreach ($piece in $newestPackage.Results.Keys) {
-                $lastFastRefresh = $null
-                if ($piece -eq 'git') {
-                    $currentGitValue = $null
-                    $newGitValue = $newestPackage.Results[$piece]
-                    if (
-                        $global:flare_resultCache.TryGetValue($piece, [ref]$currentGitValue) -and
-                        ((Get-FlareGitMetadataPrefix $newGitValue) -ne (Get-FlareGitMetadataPrefix $currentGitValue))
-                    ) {
-                        continue
-                    }
-                }
-                elseif ($global:flare_fastRefreshTimestamps.TryGetValue($piece, [ref]$lastFastRefresh) -and $newestPackage.Timestamp -lt $lastFastRefresh) {
-                    continue
-                }
-
-                $global:flare_resultCache[$piece] = $newestPackage.Results[$piece]
-            }
-
-            # Clean up packages that are no longer needed (including other directories).
-            foreach ($key in $packageKeys) {
-                $null = $global:flare_resultCache.TryRemove($key, [ref]$null)
-            }
-        }
-        else {
-            # No applicable package for the current directory; still clean up packages so
-            # completed jobs from other directories cannot apply later.
-            foreach ($key in $packageKeys) {
-                $null = $global:flare_resultCache.TryRemove($key, [ref]$null)
-            }
-        }
-    }
-
-    # Wait for and clean up all completed jobs
-    foreach ($job in $completedJobs) {
-        $null = Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-    }
-
-    # Remove completed jobs from our tracking collection
-    $newBag = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
-    foreach ($job in ($global:flare_backgroundJobs | Where-Object { -not (Test-FlareBackgroundJobTerminalState $_) })) {
-        $newBag.Add($job)
-    }
-    $global:flare_backgroundJobs = $newBag
-
-    $allPieces = $global:flare_leftPieces + $global:flare_rightPieces
-    $comparisonPieces = $allPieces | Where-Object { $_ -notin $global:flare_mainThread }
-    # Check if there are changes between caches for background pieces
     $hasChanges = $false
-    foreach ($piece in $comparisonPieces) {
-        $cachedValue = $null
-        # Use TryGetValue for atomic check-and-read to avoid race conditions
-        if ($global:flare_resultCache.TryGetValue($piece, [ref]$cachedValue)) {
-            # If piece is in result cache but not in render cache or values differ
-            if ($cachedValue -ne $global:flare_lastRenderCache[$piece]) {
+    foreach ($piece in $acceptedResult.Pieces) {
+        $newValue = $acceptedResult.Results[$piece]
+        if ($newValue) {
+            if (-not $global:flare_resultCache.ContainsKey($piece) -or $global:flare_resultCache[$piece] -ne $newValue) {
                 $hasChanges = $true
-                break
             }
+            $global:flare_resultCache[$piece] = $newValue
+        }
+        elseif ($global:flare_resultCache.ContainsKey($piece)) {
+            $global:flare_resultCache.Remove($piece)
+            $hasChanges = $true
         }
     }
 
-    # Only redraw prompt if changes were detected
-    if ($hasChanges) {
-        # Update the lastRenderCache with current values
-        foreach ($piece in $comparisonPieces) {
-            $cachedValue = $null
-            if ($global:flare_resultCache.TryGetValue($piece, [ref]$cachedValue)) {
-                $global:flare_lastRenderCache[$piece] = $cachedValue
-            }
-        }
-
-        # Redraw the prompt - wrap in try-catch to prevent blocking if PSReadLine is in an inconsistent state
+    if ($hasChanges -and -not $DisableRedraw) {
         $global:flare_redrawing = $true
         try {
             [Microsoft.PowerShell.PSConsoleReadLine]::InvokePrompt()
         }
         catch {
-            # Silently ignore - prompt will be redrawn on next command anyway
+            Write-Debug "Flare prompt redraw failed: $($_.Exception.Message)"
         }
-        $global:flare_redrawing = $false
+        finally {
+            $global:flare_redrawing = $false
+        }
     }
+
+    return $hasChanges
 }
 
-# Register-EngineEvent -SourceIdentifier PowerShell.OnIdle -Action {
-#     New-Event -SourceIdentifier Flare.Redraw -Sender $Sender
-# }
+$script:flare_idleCallback = {
+    $null = Update-FlareBackgroundResults
+}
+$script:flare_idleEventJob = Register-EngineEvent `
+    -SourceIdentifier PowerShell.OnIdle `
+    -Action {
+        & $flareIdleCallback
+    }
+$script:flare_idleEventJob.Module.SessionState.PSVariable.Set('flareIdleCallback', $script:flare_idleCallback)
+$script:flare_idleSubscriptionId = Get-EventSubscriber |
+    Where-Object { $_.Action -eq $script:flare_idleEventJob } |
+    Select-Object -ExpandProperty SubscriptionId -First 1
+
+$script:flare_exitCallback = {
+    Stop-FlareRefreshWorker
+}
+$script:flare_exitEventJob = Register-EngineEvent `
+    -SourceIdentifier PowerShell.Exiting `
+    -Action {
+        & $flareExitCallback
+    }
+$script:flare_exitEventJob.Module.SessionState.PSVariable.Set('flareExitCallback', $script:flare_exitCallback)
+$script:flare_exitSubscriptionId = Get-EventSubscriber |
+    Where-Object { $_.Action -eq $script:flare_exitEventJob } |
+    Select-Object -ExpandProperty SubscriptionId -First 1
 
 # Register a cleanup event handler for when the module is removed
 $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
-    Get-EventSubscriber | Unregister-Event
-    # Clean up all background jobs
-    foreach ($job in $global:flare_backgroundJobs) {
-        Stop-Job -Job $job -ErrorAction SilentlyContinue
-        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+    foreach ($subscriptionId in @($script:flare_idleSubscriptionId, $script:flare_exitSubscriptionId)) {
+        if ($subscriptionId) {
+            Unregister-Event -SubscriptionId $subscriptionId -ErrorAction SilentlyContinue
+        }
     }
-
-    $global:flare_backgroundJobs = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
+    foreach ($eventJob in @($script:flare_idleEventJob, $script:flare_exitEventJob)) {
+        if ($eventJob) {
+            Remove-Job -Job $eventJob -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Stop-FlareRefreshWorker
 }
 
+<#
+.SYNOPSIS
+Renders Flare's two-line PowerShell prompt.
+.DESCRIPTION
+Clears incompatible cache data after directory changes, renders the fast path,
+and submits slow pieces to the background refresh worker.
+.OUTPUTS
+System.String
+#>
 function Prompt {
+    $currentDirectory = $PWD.Path
     if ($global:flare_lastDirectory) {
-        if ($PWD.Path -ne $global:flare_lastDirectory.Path) {
-            # Clear the last render cache when the directory changes
-            $global:flare_lastRenderCache.Clear()
+        if ($currentDirectory -ne $global:flare_lastDirectory) {
             $global:flare_resultCache.Clear()
-            $global:flare_fastRefreshTimestamps.Clear()
-
-            # Cancel any in-flight background jobs created for the previous directory.
-            # If we don't, a slower job can complete after cd and OnIdle can reapply
-            # stale results for the old directory.
-            foreach ($job in $global:flare_backgroundJobs) {
-                try {
-                    Stop-Job -Job $job -ErrorAction SilentlyContinue
-                    Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
-                }
-                catch {
-                    # Ignore failures; jobs may have already completed/been removed.
-                }
-            }
-            $global:flare_backgroundJobs = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
         }
     }
 
-    $global:flare_lastDirectory = $PWD
-
+    $global:flare_lastDirectory = $currentDirectory
 
     $topLine = Get-PromptTopLine -DisableBackground $global:flare_redrawing
     $line = Get-PromptLine
@@ -535,37 +425,3 @@ function Prompt {
 
 # Add module exports
 Export-ModuleMember -Function @('Prompt')
-
-# Use Set-PSReadLineKeyHandler to clear the prompt and rewrite the user's input when the user submits a command
-Set-PSReadLineKeyHandler -Key Enter -BriefDescription 'Clear prompt and rewrite input on Enter' -ScriptBlock {
-    # Prepare references for the input line and cursor position
-    $inputLineRef = [ref]''
-    $cursorPositionRef = [ref]0
-
-    # Retrieve the current input from the command line buffer using GetBufferState
-    [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState($inputLineRef, $cursorPositionRef)
-    $inputLine = $inputLineRef.Value
-
-    # Check if the input is multiline
-    if ($inputLine -join '' -match "`n") {
-        # If multiline, invoke the default Enter key behavior without clearing the prompt
-        [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
-        return
-    }
-
-    # Move the cursor up by two lines to clear the two-line prompt
-    [System.Console]::SetCursorPosition(0, [System.Console]::CursorTop - 1)
-
-    # Get the console width to overwrite the lines with spaces
-    $consoleWidth = [System.Console]::BufferWidth
-
-    # Clear the current line and the next line by overwriting with spaces
-    [System.Console]::Write(' ' * $consoleWidth * 2)
-
-    # Rewrite the user's input prefixed with '>'
-    [System.Console]::SetCursorPosition(0, [System.Console]::CursorTop - 1)
-    Write-Host "$(Get-PromptLine) $($inputLine -join '')" -NoNewline
-
-    # Execute the command by invoking the default Enter key behavior
-    [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
-}

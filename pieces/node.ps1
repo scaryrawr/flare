@@ -1,5 +1,11 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
+<#
+.SYNOPSIS
+Shows the Node.js version for a detected Node.js project.
+.OUTPUTS
+System.String
+#>
 function flare_node {
   $packageJsonPath = FindFileInParentDirectories -fileName 'package.json'
 

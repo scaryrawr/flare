@@ -1,5 +1,13 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
+<#
+.SYNOPSIS
+Locates repository and Git metadata paths without invoking Git.
+.PARAMETER Path
+The directory from which to search for a .git entry.
+.OUTPUTS
+System.Collections.Hashtable
+#>
 function Get-GitRepoInfo {
   param([string]$Path = (Get-Location))
   
@@ -35,6 +43,16 @@ function Get-GitRepoInfo {
   }
 }
 
+<#
+.SYNOPSIS
+Finds a tag that points directly to a commit.
+.PARAMETER GitDir
+The resolved Git metadata directory.
+.PARAMETER CommitHash
+The full commit hash to match against tag references.
+.OUTPUTS
+System.String
+#>
 function Get-TagForCommit {
   param([string]$GitDir, [string]$CommitHash)
   
@@ -72,6 +90,14 @@ function Get-TagForCommit {
   return $null
 }
 
+<#
+.SYNOPSIS
+Reads the active Git operation and its progress from metadata files.
+.PARAMETER GitDir
+The resolved Git metadata directory.
+.OUTPUTS
+System.Collections.Hashtable
+#>
 function Get-GitOperationStatus {
   param([string]$GitDir)
   
@@ -145,6 +171,15 @@ function Get-GitOperationStatus {
   }
 }
 
+<#
+.SYNOPSIS
+Shows Git branch or detached-head metadata without scanning worktree status.
+.DESCRIPTION
+Reads repository metadata files synchronously to provide a fast Git value while
+the background Git piece calculates detailed status counts.
+.OUTPUTS
+System.String
+#>
 function flare_git_fast {
   # Get repository info
   $repoInfo = Get-GitRepoInfo

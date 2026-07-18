@@ -25,4 +25,9 @@ Write-Host "  Average: $([math]::Round($avg,2)) ms"
 Write-Host "  Min:     $([math]::Round($min,2)) ms"
 Write-Host "  Max:     $([math]::Round($max,2)) ms"
 
+if ($avg -gt 250) {
+    Write-Host "FAIL Average prompt time exceeded 250 ms" -ForegroundColor Red
+    exit 1
+}
+
 "$(Prompt)"

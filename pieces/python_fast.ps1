@@ -1,3 +1,9 @@
+<#
+.SYNOPSIS
+Shows the active Python virtual-environment name without invoking Python.
+.OUTPUTS
+System.String
+#>
 function flare_python_fast {
   if ($env:VIRTUAL_ENV) {
     $venv_folder = Split-Path -Path $env:VIRTUAL_ENV -Parent

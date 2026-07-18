@@ -1,3 +1,12 @@
+<#
+.SYNOPSIS
+Shows an abbreviated current working directory.
+.DESCRIPTION
+Replaces the user profile with a tilde and reduces parent directory names to
+their first character while preserving the final directory name.
+.OUTPUTS
+System.String
+#>
 function flare_pwd {
   $currentPath = $executionContext.SessionState.Path.CurrentLocation.ToString()
   $userHome = [Environment]::GetFolderPath('UserProfile')

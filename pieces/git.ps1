@@ -1,5 +1,14 @@
 . $PSScriptRoot/../utils/fileUtils.ps1
 
+<#
+.SYNOPSIS
+Shows detailed Git branch, operation, divergence, stash, and worktree status.
+.DESCRIPTION
+Runs Git commands to produce the slow-path repository status used to enrich the
+fast Git metadata after the background refresh completes.
+.OUTPUTS
+System.String
+#>
 function flare_git {
     # Check if git command is available
     if (-not (Get-Command git -ErrorAction SilentlyContinue)) {

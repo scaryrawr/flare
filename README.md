@@ -10,6 +10,16 @@ Very little exists here at the moment, and development may be slower as I use Wi
 
 Currently, it uses base16 colors that it inherits from your terminal.
 
+## Prompt Refresh
+
+Flare renders cheap pieces and available `*_fast` variants synchronously. Slow pieces are evaluated by one long-lived, in-process PowerShell runspace so prompt rendering never waits for them.
+
+The worker performs one refresh at a time and retains only the newest pending request. Results are matched to both a request ID and working directory before they can update the prompt. While a refresh is pending, Flare keeps compatible last-known slow data and overlays fresh fast data. A changed result redraws the prompt when PowerShell is idle.
+
+Slow refreshes do not have a timeout. A hung refresh delays later slow updates, but the prompt remains responsive and does not create additional workers.
+
+Module removal and shell exit request asynchronous worker shutdown, so teardown never waits for an active slow piece.
+
 ## Customization
 
 ### Separators, Heads, and Tails
